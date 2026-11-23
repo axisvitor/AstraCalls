@@ -32,6 +32,18 @@ export const checkAuth = async (): Promise<boolean> => {
   }
 };
 
+/** Renova o token do atendente de hora em hora enquanto a aba estiver aberta. */
+export const startAgentTokenRefresh = (): void => {
+  setInterval(() => {
+    fetch(apiUrl("/api/agent/refresh"), { method: "POST", headers: { "X-API-Key": getApiKey() } })
+      .then((r) => (r.ok ? (r.json() as Promise<{ token?: string }>) : null))
+      .then((b) => {
+        if (b?.token) setAuth(getApiBase(), b.token);
+      })
+      .catch(() => {});
+  }, 60 * 60 * 1000);
+};
+
 /** Login de atendente: troca usuário/senha por um token (usado como API key). */
 export const agentLogin = async (base: string, username: string, password: string): Promise<void> => {
   const r = await fetch(`${base}/api/agent/login`, {

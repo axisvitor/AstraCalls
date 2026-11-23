@@ -1,4 +1,4 @@
-import { getApiBase, getApiKey } from "./auth";
+import { apiUrl, clearAuth, getApiBase, getApiKey } from "./auth";
 import type { CallStatus } from "@/types/call";
 import type { SessionInfo, SessionState } from "@/types/session";
 
@@ -54,7 +54,22 @@ class EventStream {
         for (const l of this.#listeners) l(parsed);
       } catch {}
     };
-    this.#es.onerror = () => {};
+    // O navegador só reconecta sozinho em erro de rede. Se o servidor recusar (401:
+    // token expirado ou atendente removido) o EventSource fecha de vez e o painel
+    // pararia de tocar sem aviso: confere o login e volta para a tela de entrada.
+    this.#es.onerror = () => {
+      if (this.#es?.readyState !== EventSource.CLOSED) return;
+      this.#es = null;
+      const retry = () => setTimeout(() => this.connect(clientId), 3000);
+      fetch(apiUrl("/api/config"), { headers: { "X-API-Key": getApiKey() } })
+        .then((r) => {
+          if (r.status === 401) {
+            clearAuth();
+            location.reload();
+          } else retry();
+        })
+        .catch(retry);
+    };
   }
 
   on(l: Listener): () => void {

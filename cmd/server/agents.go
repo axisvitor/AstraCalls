@@ -304,9 +304,14 @@ func (d *agentDirectory) login(username, password string) (string, agent, time.T
 	d.mu.Lock()
 	delete(d.fails, username)
 	d.mu.Unlock()
-	exp := now.Add(agentTokenTTL)
-	tok := signHMACToken(agentTokenPrefix, agentSigningSecret(), agentTokenClaims{ID: found.ID, PW: found.pwTag(), Exp: exp.Unix()})
+	tok, exp := d.issue(found)
 	return tok, *found, exp, nil
+}
+
+// issue emite um token novo para o atendente (login e renovação).
+func (d *agentDirectory) issue(a *agent) (string, time.Time) {
+	exp := d.now().Add(agentTokenTTL)
+	return signHMACToken(agentTokenPrefix, agentSigningSecret(), agentTokenClaims{ID: a.ID, PW: a.pwTag(), Exp: exp.Unix()}), exp
 }
 
 // fromToken valida um token de atendente: assinatura, expiração, atendente ainda
@@ -341,6 +346,8 @@ func agentAllowed(r *http.Request, a *agent) bool {
 	switch p {
 	case "/api/config", "/api/events":
 		return r.Method == http.MethodGet
+	case "/api/agent/refresh":
+		return r.Method == http.MethodPost
 	case "/api/sessions": // a lista é filtrada no handler
 		return r.Method == http.MethodGet
 	}
@@ -404,6 +411,46 @@ func (s *server) handleAgentLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expiresAt": exp.UTC().Format(time.RFC3339), "agent": a})
+}
+
+// POST /api/agent/refresh — o atendente troca o token válido por um novo (mais
+// 12 h). O painel chama periodicamente, então a aba aberta não "expira" no meio do
+// expediente; atendente removido ou com senha trocada não renova.
+func (s *server) handleAgentRefresh(w http.ResponseWriter, r *http.Request) {
+	a := agentFrom(r)
+	if a == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "só para atendente"})
+		return
+	}
+	tok, exp := s.agents.issue(a)
+	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expiresAt": exp.UTC().Format(time.RFC3339), "agent": a})
+}
+
+// agentWatchEvery: de quanto em quanto tempo o SSE de um atendente confere se o
+// token ainda vale (atendente removido, senha trocada, token expirado).
+var agentWatchEvery = 30 * time.Second
+
+// agentStreamContext devolve um contexto que é cancelado quando o token do
+// atendente deixa de valer — o SSE fecha e o painel volta para o login.
+func (s *server) agentStreamContext(r *http.Request) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(r.Context())
+	tok := requestAPIKey(r)
+	go func() {
+		t := time.NewTicker(agentWatchEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, ok := s.agents.fromToken(tok); !ok {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return ctx, cancel
 }
 
 // GET /api/agents — só chave-mestra.

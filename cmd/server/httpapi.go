@@ -27,6 +27,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/widget-tokens", s.handleWidgetToken)
 	// Atendentes: login aberto; gestão só com a chave-mestra (ver agents.go).
 	mux.HandleFunc("POST /api/agent/login", s.handleAgentLogin)
+	mux.HandleFunc("POST /api/agent/refresh", s.handleAgentRefresh)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	mux.HandleFunc("PUT /api/agents/{id}", s.handleUpdateAgent)
@@ -555,6 +556,11 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			only[sid] = true
 		}
 		s.broker.setClientLabel(cid, a.Name) // nome no histórico de quem atendeu/ligou
+		ctx, cancel := s.agentStreamContext(r)
+		defer cancel()
+		r = r.WithContext(ctx)
+	} else {
+		s.broker.setClientLabel(cid, "") // mesmo navegador usado depois pelo admin
 	}
 	s.log.Info("sse connect", "clientId", cid, "accountId", acc, "origin", r.Header.Get("Origin"), "cwHost", host, "inboxes", len(inboxes))
 	s.broker.serveSSE(w, r, cid, acc, host, inboxes, only)
@@ -938,6 +944,9 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	owner := clientID(r)
+	if agentFrom(r) != nil {
+		body.Record = false // gravar é decisão do administrador (gravação por sessão)
+	}
 	// (removido) regra "1 chamada por operador" — agora o mesmo navegador/aba
 	// pode disparar várias ligações na mesma sessão (até -max-calls-per-session).
 	if max := s.sessions.maxCalls; max > 0 && sess.activeCallCount() >= max {

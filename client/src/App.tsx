@@ -13,6 +13,7 @@ import { ensureSessionsWired, useSessions } from "@/stores/sessions";
 import { ensureCallsWired } from "@/stores/calls";
 import { useTheme } from "@/stores/theme";
 import { useIsAgent } from "@/stores/auth";
+import { startAgentTokenRefresh } from "@/lib/auth";
 
 export const App = () => {
   const sessions = useSessions((s) => s.sessions);
@@ -24,6 +25,10 @@ export const App = () => {
     ensureSessionsWired();
     ensureCallsWired();
   }, []);
+
+  useEffect(() => {
+    if (isAgent) startAgentTokenRefresh();
+  }, [isAgent]);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
 

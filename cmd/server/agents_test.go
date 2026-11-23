@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -242,3 +243,59 @@ func TestAgentNameInHistory(t *testing.T) {
 	}
 }
 
+// O atendente renova o token com a aba aberta; o admin não usa essa rota.
+func TestAgentRefresh(t *testing.T) {
+	d, _ := newTestAgents(t)
+	srv := &server{agents: d}
+	tok := loginToken(t, d)
+	h := withAuth(http.HandlerFunc(srv.handleAgentRefresh), "mestra", "", nil, d.fromToken)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/agent/refresh", nil)
+	req.Header.Set("X-API-Key", tok)
+	h.ServeHTTP(rec, req)
+	var out struct{ Token string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if rec.Code != http.StatusOK || out.Token == "" {
+		t.Fatalf("refresh = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := d.fromToken(out.Token); !ok {
+		t.Fatal("token renovado inválido")
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/agent/refresh", nil)
+	req.Header.Set("X-API-Key", "mestra")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("admin no refresh = %d", rec.Code)
+	}
+}
+
+// O SSE de um atendente fecha sozinho quando ele é removido (o painel reconecta,
+// leva 401 e volta para o login).
+func TestAgentSSEClosesOnRevoke(t *testing.T) {
+	d, a := newTestAgents(t)
+	prev := agentWatchEvery
+	agentWatchEvery = 10 * time.Millisecond
+	t.Cleanup(func() { agentWatchEvery = prev })
+	srv := &server{agents: d, broker: NewBroker(), sessions: &SessionManager{sessions: map[string]*Session{}}, log: slog.Default()}
+	tok := loginToken(t, d)
+	h := withAuth(http.HandlerFunc(srv.handleEvents), "mestra", "", nil, d.fromToken)
+	req := httptest.NewRequest("GET", "/api/events?clientId=c1", nil)
+	req.Header.Set("X-API-Key", tok)
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("SSE fechou com o atendente ainda válido")
+	case <-time.After(50 * time.Millisecond):
+	}
+	_ = d.remove(context.Background(), a.ID)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE continuou aberto depois de remover o atendente")
+	}
+}
