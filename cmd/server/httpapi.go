@@ -334,7 +334,14 @@ func withCORS(h http.Handler) http.Handler {
 func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid string) (acct, inbox int), agentAuth func(tok string) (*agent, bool)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook") && p != "/api/agent/login"
+		// Barra codificada (%2F) num caminho /api/ não tem uso legítimo e faz o
+		// caminho decodificado (que as regras abaixo olham) divergir do que o roteador
+		// casa: ".../contacts/123%2Fchatwoot%2Fwebhook" parecia o webhook isento.
+		if strings.HasPrefix(p, "/api/") && strings.Contains(strings.ToLower(r.URL.EscapedPath()), "%2f") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+			return
+		}
+		guarded := strings.HasPrefix(p, "/api/") && !chatwootWebhookPath.MatchString(p) && p != "/api/agent/login"
 		if guarded {
 			got := requestAPIKey(r)
 			if got == key {
@@ -391,6 +398,9 @@ func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid strin
 	})
 }
 
+// chatwootWebhookPath é a ÚNICA rota /api/ isenta de chave (o Chatwoot chama de fora).
+var chatwootWebhookPath = regexp.MustCompile(`^/api/sessions/[^/]+/chatwoot/webhook$`)
+
 // sessionIDFromPath devolve o {sid} de /api/sessions/{sid}/... ("" se não for rota de sessão).
 func sessionIDFromPath(p string) string {
 	rest, ok := strings.CutPrefix(p, "/api/sessions/")
@@ -399,6 +409,14 @@ func sessionIDFromPath(p string) string {
 	}
 	sid, _, _ := strings.Cut(rest, "/")
 	return sid
+}
+
+// sessionSubroute devolve o 1º trecho depois de /api/sessions/{sid}/ ("" se não houver).
+func sessionSubroute(p string) string {
+	rest, _ := strings.CutPrefix(p, "/api/sessions/")
+	_, rest, _ = strings.Cut(rest, "/")
+	first, _, _ := strings.Cut(rest, "/")
+	return first
 }
 
 // requestAPIKey extrai a chave da requisição (X-API-Key, Bearer ou ?apiKey=).
@@ -453,7 +471,7 @@ func widgetAllowed(r *http.Request) bool {
 		return true
 	// operações de chamada: iniciar, atender/recusar, webrtc, vídeo, encerrar
 	// (/api/sessions/{sid}/calls e abaixo). Não abre a gestão de sessões em si.
-	case strings.HasPrefix(p, "/api/sessions/") && strings.Contains(p, "/calls"):
+	case strings.HasPrefix(p, "/api/sessions/") && sessionSubroute(p) == "calls":
 		return true
 	}
 	return false
