@@ -1149,10 +1149,18 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 	if s.sipGW != nil {
 		s.sipGW.cancelInboundRing(id)
 	}
+	// O <accept> vai sair agora: o timer de toque não pode mais derrubar a chamada
+	// (antes só parava quando a mídia ficava ativa, e um aceite perto do fim do
+	// toque deixava quem ligou numa chamada morta).
+	sess.reg.stopRingTimer(id)
+	ac.answered.Store(true)
 	if err := ac.cm.AcceptCall(r.Context(), id); err != nil {
+		ac.answered.Store(false)
+		sess.armRingTimeout(id) // não aceitou: volta a valer o timeout de toque
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	sess.armConnectTimeout(id)
 	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": id}})
 }
 

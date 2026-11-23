@@ -743,6 +743,21 @@ func (s *Session) armRingTimeout(callID string) {
 	s.reg.setRingTimer(callID, t)
 }
 
+// acceptConnectTimeout: prazo para a mídia conectar depois do <accept>. Sem ele,
+// uma chamada aceita que nunca fica ativa nem recebe encerramento ficaria presa
+// (o timer de toque já foi parado no aceite). Cancelado quando a mídia conecta.
+var acceptConnectTimeout = 60 * time.Second
+
+func (s *Session) armConnectTimeout(callID string) {
+	s.reg.setRingTimer(callID, time.AfterFunc(acceptConnectTimeout, func() {
+		if c, ok := s.mgr.broker.getCall(callID); ok && c.Status == StatusConnected {
+			return
+		}
+		s.log.Info("chamada aceita não conectou a mídia a tempo; encerrando", "call_id", callID)
+		s.terminateCall(callID, core.EndCallReasonFailed) // já aceita: <terminate> é o certo
+	}))
+}
+
 // expireRingingCall encerra uma chamada que ficou tocando além do timeout sem
 // nunca ter sido atendida nem recebido encerramento. Recusa no WhatsApp, avisa
 // TODOS os assinantes (call-ended) e libera a vaga.
