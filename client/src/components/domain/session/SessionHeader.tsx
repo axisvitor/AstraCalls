@@ -13,6 +13,7 @@ import { WebhookDialog } from "./WebhookDialog";
 import { logoutSession, pairSession, setRecording } from "@/services/sessions";
 import { phoneFromJid } from "@/utils/format";
 import type { SessionInfo, SessionState } from "@/types/session";
+import { useAuthInfo } from "@/stores/auth";
 
 const statusLabel: Record<SessionState, string> = {
   open: "Conectado",
@@ -36,6 +37,9 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
   const [busy, setBusy] = useState(false);
   const [recBusy, setRecBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const auth = useAuthInfo();
+  const isAgent = auth.role === "agent";
+  const lean = isAgent || auth.callsOnly; // esconde o que não é chamada
 
   const copyId = async () => {
     try {
@@ -90,7 +94,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
             <span>Último número: <span className="font-medium">{lastPhone}</span></span>
           </div>
         ) : null}
-        <button
+        {!isAgent && <button
           type="button"
           onClick={copyId}
           title="Copiar ID da sessão (use na API)"
@@ -99,10 +103,10 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
           <span className="font-medium">ID:</span>
           <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{session.id}</code>
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-        </button>
+        </button>}
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {session.paired && (
+        {session.paired && !isAgent && (
           <label className="mr-1 flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
             <Mic className="h-4 w-4" />
             <span className="hidden sm:inline">Gravar</span>
@@ -114,13 +118,13 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
             />
           </label>
         )}
-        {session.paired && <ProxyDialog sid={session.id} />}
-        {session.paired && <SIPDialog session={session} />}
-        <WebhookDialog sid={session.id} />
-        <McpDialog sid={session.id} />
-        {session.paired && <ChatwootDialog sid={session.id} />}
-        {session.paired && <FormsDialog sid={session.id} />}
-        {session.paired ? (
+        {!lean && session.paired && <ProxyDialog sid={session.id} />}
+        {!lean && session.paired && <SIPDialog session={session} />}
+        {!lean && <WebhookDialog sid={session.id} />}
+        {!lean && <McpDialog sid={session.id} />}
+        {!lean && session.paired && <ChatwootDialog sid={session.id} />}
+        {!lean && session.paired && <FormsDialog sid={session.id} />}
+        {isAgent ? null : session.paired ? (
           <Button
             variant="outline"
             size="sm"

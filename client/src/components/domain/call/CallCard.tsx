@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PhoneOff, PhoneForwarded, Pause, Play, Video, VideoOff, RotateCw } from "lucide-react";
+import { PhoneOff, PhoneForwarded, Pause, Play, Video, VideoOff, RotateCw, Mic, MicOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { useCallHold } from "@/hooks/useCallHold";
 import { useTransferCall } from "@/hooks/useTransferCall";
 import { useCallVideo } from "@/hooks/useCallVideo";
 import { formatCallDuration } from "@/utils/format";
+import { useLean } from "@/stores/auth";
 import type { CallStatus, CallSummary } from "@/types/call";
 
 const statusVariant: Record<CallStatus, "success" | "secondary" | "muted"> = {
@@ -41,6 +42,8 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const transfer = useTransferCall();
   const video = useCallVideo(call);
   const held = call.held ?? false;
+  const lean = useLean();
+  const [muted, setMuted] = useState(false);
   const [, force] = useState(0);
   const [micDb, setMicDb] = useState(-60);
   const [peerDb, setPeerDb] = useState(-60);
@@ -91,8 +94,8 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   // isto zera o medidor e evita uplink à toa) e retoma ao sair da espera.
   useEffect(() => {
     if (!conn) return;
-    for (const t of conn.micStream.getAudioTracks()) t.enabled = !held;
-  }, [conn, held]);
+    for (const t of conn.micStream.getAudioTracks()) t.enabled = !held && !muted;
+  }, [conn, held, muted]);
 
   useEffect(() => {
     const el = audioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
@@ -126,6 +129,22 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {active && !held && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={muted ? "secondary" : "outline"}
+                    size="icon"
+                    onClick={() => setMuted((m) => !m)}
+                    aria-label={muted ? "Ativar microfone" : "Mudo"}
+                    aria-pressed={muted}
+                  >
+                    {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{muted ? "Ativar microfone" : "Mudo"}</TooltipContent>
+              </Tooltip>
+            )}
             {active && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -160,7 +179,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
                 <TooltipContent>Transferir para outro atendente</TooltipContent>
               </Tooltip>
             )}
-            {active && !held && (
+            {active && !held && !lean && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -184,7 +203,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
                   variant="destructive"
                   size="icon"
                   onClick={() => endCall.mutate({ sid: call.sessionId, callId: call.callId })}
-                  aria-label="End call"
+                  aria-label="Desligar"
                 >
                   <PhoneOff className="h-4 w-4" />
                 </Button>

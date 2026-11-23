@@ -39,12 +39,46 @@ const startRingLoop = (): RingHandle | null => {
     playToneAt(0, 1.0, 480);
     setTimeout(scheduleCycle, 3000);
   };
+  // sem um clique na página o navegador pode criar o contexto suspenso.
+  void ctx.resume().catch(() => {});
   scheduleCycle();
   return {
     stop: () => {
       cancelled = true;
       void ctx.close().catch(() => {});
     },
+  };
+};
+
+// Aviso do sistema quando a aba está em segundo plano. A permissão é pedida no
+// primeiro clique na página (alguns navegadores só aceitam pedir num gesto).
+const askNotifyOnFirstClick = (): void => {
+  if (typeof Notification === "undefined" || Notification.permission !== "default") return;
+  const ask = () => {
+    document.removeEventListener("click", ask);
+    void Notification.requestPermission().catch(() => {});
+  };
+  document.addEventListener("click", ask);
+};
+
+const notifyBackground = (peer: string, tag: string): (() => void) => {
+  const prevTitle = document.title;
+  document.title = "📞 Chamada recebida";
+  let n: Notification | null = null;
+  if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
+    try {
+      n = new Notification("Chamada recebida", { body: peer || "Número desconhecido", tag, requireInteraction: true });
+      n.onclick = () => {
+        window.focus();
+        n?.close();
+      };
+    } catch {
+      n = null;
+    }
+  }
+  return () => {
+    document.title = prevTitle;
+    n?.close();
   };
 };
 
@@ -55,10 +89,16 @@ export const IncomingCallModal = () => {
   const reject = useRejectCall();
   const busy = accept.isPending || reject.isPending;
 
+  useEffect(askNotifyOnFirstClick, []);
+
   useEffect(() => {
     if (!incoming) return;
     const ring = startRingLoop();
-    return () => ring?.stop();
+    const clearNotice = notifyBackground(incoming.peer, incoming.callId);
+    return () => {
+      ring?.stop();
+      clearNotice();
+    };
   }, [incoming]);
 
   return (
@@ -74,8 +114,8 @@ export const IncomingCallModal = () => {
           <div className="mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
             <PhoneIncoming className="h-7 w-7" />
           </div>
-          <DialogTitle>{incoming?.video ? "Incoming video call" : "Incoming call"}</DialogTitle>
-          <DialogDescription className="truncate">{incoming?.peer}</DialogDescription>
+          <DialogTitle>{incoming?.video ? "Chamada de vídeo recebida" : "Chamada recebida"}</DialogTitle>
+          <DialogDescription className="truncate">{incoming?.peer || "Número desconhecido"}</DialogDescription>
         </DialogHeader>
         <div className="mt-2 flex items-center justify-center gap-6">
           <Button
@@ -84,7 +124,7 @@ export const IncomingCallModal = () => {
             className="h-14 w-14 rounded-full"
             disabled={busy}
             onClick={() => incoming && reject.mutate({ sid: incoming.sessionId, callId: incoming.callId })}
-            aria-label="Reject"
+            aria-label="Recusar"
           >
             <PhoneOff className="h-6 w-6" />
           </Button>
@@ -93,7 +133,7 @@ export const IncomingCallModal = () => {
             className="h-14 w-14 rounded-full"
             disabled={busy}
             onClick={() => incoming && accept.mutate({ sid: incoming.sessionId, callId: incoming.callId, video: !!incoming.video })}
-            aria-label="Accept"
+            aria-label="Atender"
           >
             <Phone className="h-6 w-6" />
           </Button>

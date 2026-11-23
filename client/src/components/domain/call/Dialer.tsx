@@ -6,16 +6,18 @@ import { Button } from "@/components/ui/button";
 import { DeviceSelector } from "@/components/form/DeviceSelector";
 import { useStartCall } from "@/hooks/useStartCall";
 import { useDevices } from "@/stores/devices";
+import { useLean } from "@/stores/auth";
 
 export const Dialer = ({ sid }: { sid: string }) => {
   const [phone, setPhone] = useState("");
   const [video, setVideo] = useState(false);
   const micId = useDevices((s) => s.micId);
+  const lean = useLean(); // só voz: sem botão de vídeo
   const startCall = useStartCall(sid, micId);
 
   const submit = () => {
     if (!phone.trim() || startCall.isPending) return;
-    startCall.mutate({ phone: phone.trim(), record: false, video }, { onSuccess: () => setPhone("") });
+    startCall.mutate({ phone: phone.trim(), record: false, video: video && !lean }, { onSuccess: () => setPhone("") });
   };
 
   return (
@@ -36,7 +38,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
             inputMode="tel"
             className="min-w-0 flex-1"
           />
-          <Button
+          {!lean && <Button
             type="button"
             variant={video ? "default" : "outline"}
             size="sm"
@@ -45,7 +47,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
           >
             <Video className="h-4 w-4" />
             Vídeo
-          </Button>
+          </Button>}
           <Button onClick={submit} disabled={startCall.isPending || !phone.trim()}>
             <Phone className="h-4 w-4" />
             {startCall.isPending ? "Ligando…" : "Ligar"}

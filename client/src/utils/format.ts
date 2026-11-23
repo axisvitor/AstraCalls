@@ -19,8 +19,15 @@ export const phoneFromJid = (jid: string): string => {
   return `+${d}`;
 };
 
+const statusLabel: Record<CallStatus, string> = {
+  starting: "Iniciando…",
+  ringing: "Chamando…",
+  connected: "Em chamada",
+  ended: "Encerrada",
+};
+
 export const formatCallDuration = (startedAt: number, status: CallStatus): string => {
-  if (status !== "connected") return status;
+  if (status !== "connected") return statusLabel[status] ?? status;
   const s = Math.floor((Date.now() - startedAt) / 1000);
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 };

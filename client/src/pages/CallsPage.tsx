@@ -7,9 +7,12 @@ import { OtherCallsList } from "@/components/domain/call/OtherCallsList";
 import { HistoryDrawer } from "@/components/domain/history/HistoryDrawer";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { isMine, useCalls } from "@/stores/calls";
+import { useLean } from "@/stores/auth";
+import { MicPermissionBanner } from "@/components/domain/call/MicPermissionBanner";
 
 export const CallsPage = ({ sid }: { sid: string }) => {
   const calls = useCalls((s) => s.calls);
+  const lean = useLean();
   const [, force] = useState(0);
 
   useEffect(() => {
@@ -29,8 +32,9 @@ export const CallsPage = ({ sid }: { sid: string }) => {
         </h2>
         <HistoryDrawer sid={sid} />
       </div>
+      <MicPermissionBanner />
       <Dialer sid={sid} />
-      <GroupCallCard sid={sid} />
+      {!lean && <GroupCallCard sid={sid} />}
       {mine.length > 0 ? (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {mine.map((c) => (

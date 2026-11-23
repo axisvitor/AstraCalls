@@ -12,11 +12,13 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { ensureSessionsWired, useSessions } from "@/stores/sessions";
 import { ensureCallsWired } from "@/stores/calls";
 import { useTheme } from "@/stores/theme";
+import { useIsAgent } from "@/stores/auth";
 
 export const App = () => {
   const sessions = useSessions((s) => s.sessions);
   const activeId = useSessions((s) => s.activeId);
   const theme = useTheme((s) => s.theme);
+  const isAgent = useIsAgent();
 
   useEffect(() => {
     ensureSessionsWired();
@@ -29,15 +31,31 @@ export const App = () => {
     <TooltipProvider delayDuration={200}>
       <AppShell>
         {sessions.length === 0 ? (
-          <EmptyState
-            icon={<PlusCircle className="h-6 w-6" />}
-            title="Nenhuma conta ainda"
-            description="Crie sua primeira conta de WhatsApp na barra lateral para começar a ligar."
-          />
+          isAgent ? (
+            <EmptyState
+              title="Nenhuma linha liberada para você"
+              description="Peça ao administrador para liberar uma linha de WhatsApp no seu usuário."
+            />
+          ) : (
+            <EmptyState
+              icon={<PlusCircle className="h-6 w-6" />}
+              title="Nenhuma conta ainda"
+              description="Crie sua primeira conta de WhatsApp na barra lateral para começar a ligar."
+            />
+          )
         ) : active ? (
           <div className="space-y-6">
             <SessionHeader session={active} />
-            {active.paired ? <CallsPage sid={active.id} /> : <SessionPairing session={active} />}
+            {active.paired ? (
+              <CallsPage sid={active.id} />
+            ) : isAgent ? (
+              <EmptyState
+                title="Linha desconectada"
+                description="Este número não está conectado no momento. Avise o administrador."
+              />
+            ) : (
+              <SessionPairing session={active} />
+            )}
           </div>
         ) : (
           <EmptyState title="Selecione uma conta" description="Escolha uma conta na barra lateral." />

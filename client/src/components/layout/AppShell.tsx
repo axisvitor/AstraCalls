@@ -6,10 +6,15 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import { useVersion } from "@/hooks/useVersion";
+import { useAuthInfo } from "@/stores/auth";
+import { AgentsDialog } from "@/components/domain/session/AgentsDialog";
 
 export const AppShell = ({ children }: { children: ReactNode }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { label: version, commit } = useVersion();
+  const auth = useAuthInfo();
+  const isAgent = auth.role === "agent";
+  const lean = isAgent || auth.callsOnly;
 
   return (
     <div className="min-h-screen bg-background p-3 sm:p-4">
@@ -49,6 +54,13 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
               )}
             </div>
             <div className="flex items-center gap-2">
+              {isAgent && auth.agent && (
+                <span className="hidden max-w-[12rem] truncate text-sm text-muted-foreground sm:inline" title="Atendente conectado">
+                  {auth.agent.name}
+                </span>
+              )}
+              {!isAgent && <AgentsDialog />}
+              {!lean && (
               <Button variant="outline" size="icon" className="rounded-full" asChild>
                 <a
                   href="/api-docs.html"
@@ -60,6 +72,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
                   <BookOpen className="h-4 w-4" />
                 </a>
               </Button>
+              )}
               <ThemeToggle />
               {isAuthed() && (
                 <Button
