@@ -57,8 +57,8 @@ Já definidas no compose (mude só se precisar):
 |---|---|---|
 | `WACALLS_CALLS_ONLY` | `true` | Liga o modo só ligações |
 | `WACALLS_DEFAULT_TRANSPORT` | `websocket` | Áudio do navegador pela 443. Com `auto` o painel tenta WebRTC (UDP) e, se não conectar em 6 s, cai sozinho para WebSocket |
-| `WACALLS_RING_TIMEOUT_SECONDS` | `60` | Segundos até uma chamada recebida que ninguém atendeu sair do painel. `0` desliga |
-| `WACALLS_RING_TIMEOUT_REJECT` | `false` neste modo | `true` volta ao comportamento antigo (veja abaixo) |
+| `WACALLS_RING_TIMEOUT_SECONDS` | `90` neste modo | Segundos até uma chamada recebida que ninguém atendeu sair do painel. `0` desliga |
+| `WACALLS_AUTO_REJECT` | `false` neste modo | `true` volta ao comportamento antigo (veja abaixo) |
 | `WACALLS_DEVICE_NAME` | `AstraCalls` | Nome em "Dispositivos conectados" no celular (vale para pareamentos novos) |
 | `WACALLS_MAX_CALLS` | `8` | Chamadas simultâneas por número |
 
@@ -67,9 +67,15 @@ Já definidas no compose (mude só se precisar):
 Fora do modo só ligações, quando uma chamada recebida passa 60 s tocando sem que o
 WhatsApp avise que ela acabou, o AstraCalls **envia uma recusa (`reject`)**. Isso encerra
 a ligação para quem ligou e faz o celular da loja parar de tocar, mesmo que alguém
-fosse atender por lá. No modo só ligações o padrão é **não recusar**
-(`WACALLS_RING_TIMEOUT_REJECT=false`): passado o tempo, a chamada só sai do painel e
-aparece como perdida no histórico, e o celular segue tocando até quem ligou desistir.
+fosse atender por lá. O mesmo acontece quando chega uma chamada com o limite de
+chamadas simultâneas (`WACALLS_MAX_CALLS`) cheio.
+
+No modo só ligações o padrão é **não recusar** (`WACALLS_AUTO_REJECT=false`) e o tempo
+sobe para 90 s, acima do que o próprio WhatsApp deixa tocar: normalmente quem ligou
+desiste ou alguém atende antes, e o WhatsApp avisa. Se mesmo assim o tempo passar, a
+chamada só sai do painel e aparece como perdida no histórico; nada é enviado ao
+WhatsApp e o celular segue tocando. Com o limite cheio, a chamada nova só não aparece
+no painel.
 
 ### SIP
 
@@ -130,8 +136,9 @@ O ID da conta aparece no painel do administrador, embaixo do nome da conta.
 
 ## Dia a dia (atendente)
 
-- Entre na aba **Atendente** com usuário e senha. O acesso vale 12 horas; depois
-  basta entrar de novo.
+- Entre na aba **Atendente** com usuário e senha. Com a aba aberta o acesso se renova
+  sozinho; fechada, vale por 12 horas. Se o administrador remover o atendente ou
+  trocar a senha, o painel volta para a tela de entrada em até 30 segundos.
 - Deixe a aba aberta. Na primeira vez, permita o **microfone** e as **notificações**
   (o navegador pergunta no primeiro clique). Com a aba em segundo plano, a chamada
   toca, o título da aba muda e aparece uma notificação.

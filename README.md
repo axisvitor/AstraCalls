@@ -274,8 +274,8 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_UDP_PORT` | — | Porta de mídia WebRTC (UDP + ICE-TCP) |
 | `WACALLS_DEFAULT_TRANSPORT` | `auto` | Transporte de áudio do navegador: `auto` (WebRTC → fallback WS), `webrtc`, `websocket` |
 | `WACALLS_MAX_CALLS` | `8` | Equivalente a `-max-calls-per-session` |
-| `WACALLS_RING_TIMEOUT_SECONDS` | `60` | Expira chamada recebida que fica tocando sem encerramento (`0` desliga) |
-| `WACALLS_RING_TIMEOUT_REJECT` | `true` (`false` no modo só ligações) | Ao expirar, recusa no WhatsApp (encerra para quem ligou e para o celular) ou só tira do painel |
+| `WACALLS_RING_TIMEOUT_SECONDS` | `60` (`90` no modo só ligações) | Expira chamada recebida que fica tocando sem encerramento (`0` desliga) |
+| `WACALLS_AUTO_REJECT` | `true` (`false` no modo só ligações) | Recusas automáticas (toque expirado e limite de chamadas) mandam `reject` ao WhatsApp, o que encerra para quem ligou e para o celular. Com `false` a chamada só sai do painel (ou nem entra) |
 | `WACALLS_CALLS_ONLY` | off | Modo só ligações: sem presença, sem recibo de leitura, sem guardar mensagens, sem Chatwoot, sem SIP; rotas de mensagem/disparo respondem 403. Ver [guias/so-ligacoes.md](guias/so-ligacoes.md) |
 | `WACALLS_UNIFIED_SESSION_MINUTES` | `5` | Intervalo mínimo entre os sinais "unified session" enviados ao conectar, como faz o WhatsApp Web (`0` desliga) |
 | `WACALLS_DEVICE_NAME` | `Windows` | Nome do aparelho em "Dispositivos conectados" (vale para pareamentos novos) |

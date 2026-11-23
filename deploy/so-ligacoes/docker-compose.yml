@@ -26,8 +26,8 @@ services:
       # Áudio do navegador pela 443 (WebSocket). Sem porta UDP extra para abrir.
       WACALLS_DEFAULT_TRANSPORT: ${WACALLS_DEFAULT_TRANSPORT:-websocket}
       # Toque: depois de N segundos sem atender a chamada some do painel. No modo só
-      # ligações ela NÃO é recusada (o celular continua tocando).
-      WACALLS_RING_TIMEOUT_SECONDS: ${WACALLS_RING_TIMEOUT_SECONDS:-60}
+      # ligações ela NÃO é recusada (WACALLS_AUTO_REJECT=false; o celular continua tocando).
+      WACALLS_RING_TIMEOUT_SECONDS: ${WACALLS_RING_TIMEOUT_SECONDS:-90}
       WACALLS_MAX_CALLS: ${WACALLS_MAX_CALLS:-8}
       # Nome que aparece em "Dispositivos conectados" no celular.
       WACALLS_DEVICE_NAME: ${WACALLS_DEVICE_NAME:-AstraCalls}
