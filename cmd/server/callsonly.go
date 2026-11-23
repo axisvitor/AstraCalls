@@ -49,6 +49,7 @@ var callsOnlyBlockedSessionRoutes = map[string]bool{
 	"chatwoot":     true,
 	"native-forms": true,
 	"mcp-keys":     true, // MCP envia mensagens
+	"disappearing": true, // mensagens temporárias (posta aviso na conversa)
 }
 
 // errCallsOnlySend é o que Session.send devolve no modo só ligações.
@@ -61,6 +62,9 @@ func callsOnlyBlocked(p string) bool {
 		segs := strings.Split(rest, "/")
 		// status do grupo e compartilhar histórico do grupo também mandam mensagem
 		if len(segs) >= 3 && segs[0] == "groups" && (segs[2] == "status" || segs[2] == "history") {
+			return true
+		}
+		if len(segs) >= 3 && segs[0] == "chats" && segs[2] == "disappearing" {
 			return true
 		}
 		return callsOnlyBlockedSessionRoutes[segs[0]]

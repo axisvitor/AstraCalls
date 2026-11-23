@@ -164,7 +164,8 @@ func TestCallsOnlyBlocksSends(t *testing.T) {
 	}
 	// rotas de grupo que mandam mensagem também ficam de fora
 	setCallsOnly(t, true)
-	for _, p := range []string{"/api/sessions/s1/groups/123@g.us/status", "/api/sessions/s1/groups/123@g.us/history/share"} {
+	for _, p := range []string{"/api/sessions/s1/groups/123@g.us/status", "/api/sessions/s1/groups/123@g.us/history/share",
+		"/api/sessions/s1/disappearing", "/api/sessions/s1/chats/5511@s.whatsapp.net/disappearing"} {
 		if !callsOnlyBlocked(p) {
 			t.Errorf("%s deveria ser bloqueada", p)
 		}

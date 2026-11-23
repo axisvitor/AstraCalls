@@ -147,7 +147,9 @@ O ID da conta aparece no painel do administrador, embaixo do nome da conta.
   **Histórico**, com as perdidas em vermelho e o botão **Retornar**.
 - **Recusar** encerra a chamada para quem ligou e para o celular da loja. Se não quiser
   atender pelo painel, só deixe tocar.
-- Cinco senhas erradas seguidas travam o usuário por 15 minutos.
+- Cinco senhas erradas seguidas travam o usuário por 15 minutos. Isso também quer
+  dizer que alguém que saiba o nome de usuário pode travar o vendedor de propósito;
+  se acontecer, o administrador pode trocar o nome do usuário (apagar e criar de novo).
 
 ## Aba "Ligações" dentro da conversa do Chatwoot (opcional)
 
@@ -176,10 +178,14 @@ Como funciona para o vendedor:
 
 - Na primeira vez a aba pede usuário e senha do atendente. O navegador guarda o acesso
   da aba separado do painel (sites dentro de iframe têm armazenamento próprio), então
-  é um login a mais, uma vez só.
+  é um login a mais. Se o navegador bloquear cookies de terceiros (aba anônima, Brave,
+  alguns ajustes de privacidade), a aba funciona, mas pede o login de novo sempre que
+  for recarregada.
 - **Ligar para este cliente** abre (ou traz para a frente) a aba do painel do
   AstraCalls, com a linha escolhida e o número já no discador; é só clicar em Ligar.
-  Na primeira vez o navegador pode pedir para permitir pop-ups do Chatwoot.
+  Na primeira vez o navegador pode pedir para permitir pop-ups do Chatwoot. A aba do
+  painel é reconhecida pelo nome que a própria aba Ligações deu a ela: se o painel foi
+  aberto à mão, o primeiro clique abre uma segunda aba (feche a antiga).
   Se o painel não estiver logado, ele pede o login e mantém o número.
 - A ligação acontece na aba do painel porque o Chatwoot carrega a aba sem permissão
   de microfone, e o navegador não libera o microfone num site de outro domínio.
@@ -238,6 +244,10 @@ O histórico de chamadas e os atendentes ficam no Postgres (volume `pgdata`).
   `conversation.meta.sender` na falta de `contact`) e o pedido
   `chatwoot-dashboard-app:fetch-info`. Se isso mudar, a aba cai para o campo de número
   manual.
+- **Conta apagada ao reiniciar.** Se o WhatsApp desvincular o AstraCalls (ou a conta
+  nunca chegar a ser pareada) e o servidor reiniciar, a conta some do painel. Ao criar
+  de novo ela ganha outro ID: libere a nova linha para os atendentes e refaça o
+  mapeamento no botão Chatwoot.
 - **Contas com vários aparelhos** (issue #35 do projeto original): há relatos de
   chamadas que conectam sem áudio para quem ligou e de chamadas recebidas que não
   chegam. Teste com os números reais antes de depender disso.

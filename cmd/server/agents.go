@@ -289,6 +289,9 @@ func (d *agentDirectory) login(username, password string) (string, agent, time.T
 	}
 	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil || found == nil {
 		d.mu.Lock()
+		if len(d.fails) > agentFailsCap {
+			d.pruneFails(now)
+		}
 		f := d.fails[username]
 		if f == nil || !f.until.IsZero() && !now.Before(f.until) {
 			f = &loginFail{}
@@ -312,6 +315,22 @@ func (d *agentDirectory) login(username, password string) (string, agent, time.T
 func (d *agentDirectory) issue(a *agent) (string, time.Time) {
 	exp := d.now().Add(agentTokenTTL)
 	return signHMACToken(agentTokenPrefix, agentSigningSecret(), agentTokenClaims{ID: a.ID, PW: a.pwTag(), Exp: exp.Unix()}), exp
+}
+
+// agentFailsCap limita o mapa de tentativas (o login é aberto: nomes inventados
+// não podem crescer a memória sem fim).
+const agentFailsCap = 10000
+
+// pruneFails tira as entradas sem bloqueio ativo; se ainda estiver cheio, zera.
+func (d *agentDirectory) pruneFails(now time.Time) {
+	for u, f := range d.fails {
+		if !now.Before(f.until) {
+			delete(d.fails, u)
+		}
+	}
+	if len(d.fails) > agentFailsCap {
+		d.fails = map[string]*loginFail{}
+	}
 }
 
 // fromToken valida um token de atendente: assinatura, expiração, atendente ainda

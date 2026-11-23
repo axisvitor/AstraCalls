@@ -1,3 +1,4 @@
+import { storage } from "./storage";
 import { setAuthInfo, type AuthInfo } from "@/stores/auth";
 
 const URL_KEY = "wacalls.apiUrl";
@@ -9,17 +10,17 @@ export const basePath = (): string => (window as unknown as { __WACALLS_BASE?: s
 /** URL do painel/API: a salva no login, ou esta origem com o prefixo. */
 export const defaultBaseUrl = (): string => window.location.origin + basePath();
 
-export const getApiBase = (): string => (localStorage.getItem(URL_KEY) || defaultBaseUrl()).replace(/\/+$/, "");
-export const getApiKey = (): string => localStorage.getItem(KEY_KEY) || "";
+export const getApiBase = (): string => (storage.get(URL_KEY) || defaultBaseUrl()).replace(/\/+$/, "");
+export const getApiKey = (): string => storage.get(KEY_KEY) || "";
 export const isAuthed = (): boolean => !!getApiKey();
 
 export const setAuth = (url: string, key: string): void => {
-  localStorage.setItem(URL_KEY, url.replace(/\/+$/, ""));
-  localStorage.setItem(KEY_KEY, key);
+  storage.set(URL_KEY, url.replace(/\/+$/, ""));
+  storage.set(KEY_KEY, key);
 };
 
 export const clearAuth = (): void => {
-  localStorage.removeItem(KEY_KEY);
+  storage.remove(KEY_KEY);
 };
 
 export const apiUrl = (path: string): string => getApiBase() + path;
@@ -39,7 +40,10 @@ export const checkAuth = async (): Promise<boolean> => {
 };
 
 /** Renova o token do atendente de hora em hora enquanto a aba estiver aberta. */
+let refreshing = false;
 export const startAgentTokenRefresh = (): void => {
+  if (refreshing) return;
+  refreshing = true;
   setInterval(() => {
     fetch(apiUrl("/api/agent/refresh"), { method: "POST", headers: { "X-API-Key": getApiKey() } })
       .then((r) => (r.ok ? (r.json() as Promise<{ token?: string }>) : null))

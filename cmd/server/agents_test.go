@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -297,5 +298,20 @@ func TestAgentSSEClosesOnRevoke(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("SSE continuou aberto depois de remover o atendente")
+	}
+}
+
+// O mapa de tentativas não cresce sem fim com nomes inventados, mas quem está
+// travado continua travado.
+func TestAgentFailsPrune(t *testing.T) {
+	d, _ := newTestAgents(t)
+	now := time.Now()
+	for i := 0; i < 50; i++ {
+		d.fails[string(rune('a'+i%26))+strconv.Itoa(i)] = &loginFail{n: 1}
+	}
+	d.fails["maria"] = &loginFail{n: agentMaxFails, until: now.Add(time.Minute)}
+	d.pruneFails(now)
+	if len(d.fails) != 1 || d.fails["maria"] == nil {
+		t.Fatalf("depois de podar: %d entradas", len(d.fails))
 	}
 }

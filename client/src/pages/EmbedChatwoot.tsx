@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { CallCard } from "@/components/domain/call/CallCard";
 import { MicPermissionBanner } from "@/components/domain/call/MicPermissionBanner";
 import { apiGet } from "@/lib/api";
-import { defaultBaseUrl } from "@/lib/auth";
+import { defaultBaseUrl, startAgentTokenRefresh } from "@/lib/auth";
+import { useIsAgent } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 import { FETCH_INFO, contactFromContext, parseAppContextMessage, samePhone, type EmbedContact } from "@/lib/chatwoot-context";
 import { useHistory } from "@/hooks/useHistory";
@@ -92,6 +93,20 @@ export const EmbedChatwoot = () => {
     () => (ctxData && cfg ? contactFromContext(ctxData, cfg.phoneAttrs) : null),
     [ctxData, cfg],
   );
+
+  // o Chatwoot pode reaproveitar o iframe ao trocar de conversa: o que foi digitado
+  // ou escolhido para o cliente anterior não pode valer para o novo.
+  const convKey = `${contact?.conversationId ?? ""}|${contact?.name ?? ""}|${contact?.phone ?? ""}|${contact?.lid ?? ""}`;
+  useEffect(() => {
+    setManual("");
+    setPickedSid("");
+    setBlocked(false);
+  }, [convKey]);
+
+  const isAgent = useIsAgent();
+  useEffect(() => {
+    if (isAgent) startAgentTokenRefresh();
+  }, [isAgent]);
 
   // sessão: pela caixa de entrada da conversa; senão a única liberada; senão escolha.
   const mappedSid = contact?.inboxId != null ? cfg?.inboxes[String(contact.inboxId)] : undefined;
