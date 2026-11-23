@@ -247,7 +247,7 @@ func (s *Session) askMetaAI(ctx context.Context, prompt, instructions, threadKey
 		st.mu.Unlock()
 	}()
 
-	if _, err := s.client.SendMessage(ctx, bot, msg, whatsmeow.SendRequestExtra{ID: id}); err != nil {
+	if _, err := s.send(ctx, bot, msg, whatsmeow.SendRequestExtra{ID: id}); err != nil {
 		return metaAIAnswer{}, err
 	}
 

@@ -9,6 +9,7 @@ import { createSession, deleteSession } from "@/services/sessions";
 import { EXTENSION_DOWNLOAD_URL } from "@/lib/passkey";
 import { phoneFromJid } from "@/utils/format";
 import { useVersion } from "@/hooks/useVersion";
+import { useIsAgent } from "@/stores/auth";
 import type { SessionInfo, SessionState } from "@/types/session";
 
 const dotClass: Record<SessionState, string> = {
@@ -26,6 +27,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
   const [creating, setCreating] = useState(false);
   const [toDelete, setToDelete] = useState<SessionInfo | null>(null);
   const { label: version, commit } = useVersion();
+  const isAgent = useIsAgent();
 
   const onNew = async () => {
     setCreating(true);
@@ -52,7 +54,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
     <div className="flex h-full flex-col gap-1 p-3">
       <div className="flex items-center gap-2 px-2 pb-3 pt-1">
         <span className="inline-flex dark:rounded-lg dark:bg-white dark:px-2 dark:py-1.5">
-          <img src="/logoCalls.png" alt="AstraCalls" className="h-7 w-auto select-none" draggable={false} />
+          <img src="logoCalls.png" alt="AstraCalls" className="h-7 w-auto select-none" draggable={false} />
         </span>
         {version && (
           <span className="font-mono text-[0.6rem] leading-none text-muted-foreground" title={commit ? `commit ${commit}` : "Versão rodando"}>
@@ -60,12 +62,14 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
           </span>
         )}
       </div>
-      <Button className="w-full" onClick={onNew} disabled={creating}>
-        {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-        Nova conta
-      </Button>
+      {!isAgent && (
+        <Button className="w-full" onClick={onNew} disabled={creating}>
+          {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          Nova conta
+        </Button>
+      )}
       <p className="px-3 pb-1 pt-4 text-[0.68rem] font-semibold uppercase tracking-wider text-muted-foreground">
-        Contas
+        {isAgent ? "Linhas" : "Contas"}
       </p>
       <div className="flex-1 space-y-1 overflow-y-auto pr-0.5">
         {sessions.map((s) => (
@@ -93,7 +97,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
                 <p className="truncate text-xs text-muted-foreground">{phoneFromJid(s.lastJid)}</p>
               ) : null}
             </div>
-            <button
+            {!isAgent && <button
               onClick={(e) => {
                 e.stopPropagation();
                 setToDelete(s);
@@ -102,15 +106,15 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
               aria-label={`Excluir ${s.name}`}
             >
               <Trash2 className="h-4 w-4" />
-            </button>
+            </button>}
           </div>
         ))}
         {sessions.length === 0 && (
-          <p className="px-3 py-2 text-sm text-muted-foreground">Nenhuma conta ainda.</p>
+          <p className="px-3 py-2 text-sm text-muted-foreground">{isAgent ? "Nenhuma linha liberada." : "Nenhuma conta ainda."}</p>
         )}
       </div>
 
-      <a
+      {!isAgent && <a
         href={EXTENSION_DOWNLOAD_URL}
         download
         className="mt-1 flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -118,7 +122,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
       >
         <KeyRound className="h-3.5 w-3.5 shrink-0" />
         Extensão Passkey (.zip)
-      </a>
+      </a>}
 
       <ConfirmDialog
         open={!!toDelete}

@@ -169,6 +169,9 @@ func (o chatOverview) MarshalJSON() ([]byte, error) {
 
 // saveMessage persiste (ou atualiza) uma mensagem. Idempotente por (session, chat, msg_id).
 func (s *sessionStore) saveMessage(ctx context.Context, sessionID string, m storedMessage) error {
+	if callsOnly {
+		return nil // modo só ligações: não guarda conteúdo de mensagens
+	}
 	var raw any
 	if len(m.Raw) > 0 {
 		raw = []byte(m.Raw)

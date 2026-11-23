@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,17 @@ func (s *server) routes() http.Handler {
 	// = token efêmero escopado por conta (recomendado).
 	mux.HandleFunc("GET /api/widget-key", s.handleWidgetKey)
 	mux.HandleFunc("POST /api/widget-tokens", s.handleWidgetToken)
+	// Atendentes: login aberto; gestão só com a chave-mestra (ver agents.go).
+	mux.HandleFunc("POST /api/agent/login", s.handleAgentLogin)
+	mux.HandleFunc("POST /api/agent/refresh", s.handleAgentRefresh)
+	mux.HandleFunc("GET /api/agents", s.handleListAgents)
+	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
+	mux.HandleFunc("PUT /api/agents/{id}", s.handleUpdateAgent)
+	mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
+	// Aba Ligações no Chatwoot (Dashboard App) — ver embed.go.
+	mux.HandleFunc("GET /api/embed/config", s.handleGetEmbedConfig)
+	mux.HandleFunc("PUT /api/embed/config", s.handleSetEmbedConfig)
+	mux.HandleFunc("GET /api/sessions/{sid}/lid-phone", s.handleLIDPhone)
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
 	mux.HandleFunc("GET /api/sessions/{sid}/calls", s.handleSessionCalls)
@@ -280,11 +292,11 @@ func (s *server) routes() http.Handler {
 		}
 	}
 	s.apiMux = mux
-	var handler http.Handler = mux
+	var handler http.Handler = withCallsOnly(mux)
 	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
 		handler = withAuth(handler, key, os.Getenv("WACALLS_WIDGET_KEY"), func(sid string) (int, int) {
 			return s.sessions.accountIDForSession(sid), s.sessions.inboxIDForSession(sid)
-		})
+		}, s.agents.fromToken)
 	}
 	return withCORS(handler)
 }
@@ -316,15 +328,28 @@ func withCORS(h http.Handler) http.Handler {
 //
 // sessionScope (opcional) devolve conta/caixa do Chatwoot de uma sessão: com ele, um
 // token de widget só opera chamadas das sessões da própria conta (e caixa, se fixada).
-func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid string) (acct, inbox int)) http.Handler {
+//
+// agentAuth (opcional) valida um token de ATENDENTE (agents.go): ele só acessa a
+// superfície de chamadas das sessões liberadas para ele (agentAllowed).
+func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid string) (acct, inbox int), agentAuth func(tok string) (*agent, bool)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook")
+		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook") && p != "/api/agent/login"
 		if guarded {
 			got := requestAPIKey(r)
 			if got == key {
 				h.ServeHTTP(w, r) // chave-mestra: libera tudo
 				return
+			}
+			if agentAuth != nil {
+				if a, ok := agentAuth(got); ok {
+					if !agentAllowed(r, a) {
+						writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+						return
+					}
+					h.ServeHTTP(w, withAgentCtx(r, a))
+					return
+				}
 			}
 			// Superfície de widget: chave estática (por instância) OU token efêmero (por conta).
 			if widgetAllowed(r) {
@@ -420,6 +445,10 @@ func widgetAllowed(r *http.Request) bool {
 	switch {
 	case p == "/api/events": // SSE de chamadas
 		return true
+	// transporte padrão (WACALLS_DEFAULT_TRANSPORT) — sem isto o widget não lia a
+	// config, ficava em WebRTC e não caía para WebSocket (issue #51 do original).
+	case r.Method == http.MethodGet && p == "/api/config":
+		return true
 	case r.Method == http.MethodGet && p == "/api/chatwoot/resolve": // nome/telefone do contato
 		return true
 	// operações de chamada: iniciar, atender/recusar, webrtc, vídeo, encerrar
@@ -446,23 +475,53 @@ func (s *server) staticFileHandler() http.Handler {
 	fs := http.FileServer(http.Dir(s.staticDir))
 	defaultTransport := strings.TrimSpace(os.Getenv("WACALLS_DEFAULT_TRANSPORT"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// só /embed/* pode ser embutido em iframe (e só pelo Chatwoot configurado).
+		w.Header().Set("Content-Security-Policy", frameAncestors(r.URL.Path))
+		if !strings.HasPrefix(r.URL.Path, "/embed/") {
+			w.Header().Set("X-Frame-Options", "DENY")
+		}
 		switch r.URL.Path {
-		case "/", "/index.html":
+		case "/", "/index.html", "/embed/chatwoot":
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-			if defaultTransport != "" {
-				if b, err := os.ReadFile(filepath.Join(s.staticDir, "index.html")); err == nil {
-					inject := "<script>window.__WACALLS_DEFAULT_TRANSPORT=" + strconv.Quote(defaultTransport) + ";</script>"
-					html := strings.Replace(string(b), "</head>", inject+"</head>", 1)
-					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-					_, _ = w.Write([]byte(html))
-					return
+			embed := r.URL.Path == "/embed/chatwoot"
+			if b, err := os.ReadFile(filepath.Join(s.staticDir, "index.html")); err == nil {
+				// painel servido sob um caminho de outro domínio (ex.: /astracalls no
+				// domínio do Chatwoot, com o proxy mandando X-Forwarded-Prefix): os
+				// arquivos são relativos ao <base> (que tem de vir antes deles) e a API
+				// usa o mesmo prefixo.
+				prefix := forwardedPrefix(r)
+				head := `<base href="` + prefix + `/">`
+				inject := "<script>window.__WACALLS_BASE=" + strconv.Quote(prefix) + ";</script>"
+				if defaultTransport != "" {
+					inject += "<script>window.__WACALLS_DEFAULT_TRANSPORT=" + strconv.Quote(defaultTransport) + ";</script>"
 				}
+				if embed {
+					origins, _ := json.Marshal(embedOrigins())
+					inject += "<script>window.__WACALLS_EMBED_ORIGINS=" + string(origins) + ";</script>"
+				}
+				html := strings.Replace(string(b), "<head>", "<head>"+head, 1)
+				html = strings.Replace(html, "</head>", inject+"</head>", 1)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = w.Write([]byte(html))
+				return
 			}
 		case "/widget.js":
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		}
 		fs.ServeHTTP(w, r)
 	})
+}
+
+var prefixRe = regexp.MustCompile(`^(/[A-Za-z0-9_-]+)+$`)
+
+// forwardedPrefix lê o X-Forwarded-Prefix do proxy (ex.: "/astracalls"). Só aceita
+// um caminho simples (letras, números, - e _), senão "" — ele vai para o HTML.
+func forwardedPrefix(r *http.Request) string {
+	p := strings.TrimRight(strings.TrimSpace(r.Header.Get("X-Forwarded-Prefix")), "/")
+	if !prefixRe.MatchString(p) {
+		return ""
+	}
+	return p
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -524,8 +583,22 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if acc != 0 {
 		inboxes = eventInboxes(r) // filtro por caixa só vale para widget de conta
 	}
+	var only map[string]bool // atendente: só as sessões liberadas para ele
+	if a := agentFrom(r); a != nil {
+		acc, host, inboxes = 0, "", nil
+		only = map[string]bool{}
+		for _, sid := range a.Sessions {
+			only[sid] = true
+		}
+		s.broker.setClientLabel(cid, a.Name) // nome no histórico de quem atendeu/ligou
+		ctx, cancel := s.agentStreamContext(r)
+		defer cancel()
+		r = r.WithContext(ctx)
+	} else {
+		s.broker.setClientLabel(cid, "") // mesmo navegador usado depois pelo admin
+	}
 	s.log.Info("sse connect", "clientId", cid, "accountId", acc, "origin", r.Header.Get("Origin"), "cwHost", host, "inboxes", len(inboxes))
-	s.broker.serveSSE(w, r, cid, acc, host, inboxes)
+	s.broker.serveSSE(w, r, cid, acc, host, inboxes, only)
 	s.log.Info("sse disconnect", "clientId", cid, "accountId", acc)
 }
 
@@ -541,6 +614,13 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"commit":  commit,
 		// Chamada em grupo (experimental) habilitada nesta instância.
 		"groupCalls": groupCallsEnabled(),
+		// Modo só ligações (WACALLS_CALLS_ONLY): o painel esconde o que não é chamada.
+		"callsOnly": callsOnly,
+		"role":      "admin",
+	}
+	if a := agentFrom(r); a != nil {
+		cfg["role"], cfg["agent"] = "agent", a
+		cfg["groupCalls"] = false
 	}
 	// IP público anunciado no WebRTC/SIP e de onde veio (env, interface, stun:…,
 	// http:…) — diagnóstico do WACALLS_PUBLIC_IP=auto.
@@ -551,7 +631,22 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSessionList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": s.sessions.infos()})
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessionsForAgent(agentFrom(r), s.sessions.infos())})
+}
+
+// sessionsForAgent filtra a lista para um atendente (nil = admin vê tudo), sem os
+// dados de pareamento (QR/código), que só o administrador usa.
+func sessionsForAgent(a *agent, all []SessionInfo) []SessionInfo {
+	if a == nil {
+		return all
+	}
+	out := make([]SessionInfo, 0, len(all))
+	for _, si := range all {
+		if a.canSession(si.ID) {
+			out = append(out, si.forAgent())
+		}
+	}
+	return out
 }
 
 func (s *server) handleSessionCalls(w http.ResponseWriter, r *http.Request) {
@@ -860,7 +955,11 @@ func (s *server) handlePickup(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(sess.id, 50)})
+		limit := asInt(r.URL.Query().Get("limit"))
+		if limit <= 0 {
+			limit = 50
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(sess.id, min(limit, historyMemCap))})
 	}
 }
 
@@ -880,6 +979,9 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	owner := clientID(r)
+	if agentFrom(r) != nil {
+		body.Record = false // gravar é decisão do administrador (gravação por sessão)
+	}
 	// (removido) regra "1 chamada por operador" — agora o mesmo navegador/aba
 	// pode disparar várias ligações na mesma sessão (até -max-calls-per-session).
 	if max := s.sessions.maxCalls; max > 0 && sess.activeCallCount() >= max {

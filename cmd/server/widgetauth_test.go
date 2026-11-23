@@ -10,6 +10,7 @@ import (
 func TestWidgetAllowedScope(t *testing.T) {
 	allowed := []struct{ method, path string }{
 		{"GET", "/api/events"},
+		{"GET", "/api/config"}, // transporte padrão (issue #51 do original)
 		{"GET", "/api/chatwoot/resolve"},
 		{"POST", "/api/sessions/abc/calls"},
 		{"POST", "/api/sessions/abc/calls/xyz/webrtc"},
@@ -26,9 +27,9 @@ func TestWidgetAllowedScope(t *testing.T) {
 	}
 
 	denied := []struct{ method, path string }{
-		{"GET", "/api/sessions"},               // listar sessões
-		{"POST", "/api/sessions"},              // criar sessão
-		{"DELETE", "/api/sessions/abc"},        // apagar sessão
+		{"GET", "/api/sessions"},                   // listar sessões
+		{"POST", "/api/sessions"},                  // criar sessão
+		{"DELETE", "/api/sessions/abc"},            // apagar sessão
 		{"POST", "/api/sessions/abc/messages/pix"}, // mandar mensagem
 		{"PUT", "/api/sessions/abc/recording"},     // configurar gravação
 		{"GET", "/api/chatwoot/config"},            // config do chatwoot

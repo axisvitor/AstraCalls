@@ -176,7 +176,7 @@ func (s *server) handleSendPix(w http.ResponseWriter, r *http.Request) {
 
 	sendText := func(text string) (string, error) {
 		msg := &waE2E.Message{Conversation: proto.String(text)}
-		resp, err := sess.client.SendMessage(r.Context(), jid, msg)
+		resp, err := sess.send(r.Context(), jid, msg)
 		if err != nil {
 			return "", err
 		}

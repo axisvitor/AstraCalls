@@ -274,7 +274,9 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_UDP_PORT` | — | Porta de mídia WebRTC (UDP + ICE-TCP) |
 | `WACALLS_DEFAULT_TRANSPORT` | `auto` | Transporte de áudio do navegador: `auto` (WebRTC → fallback WS), `webrtc`, `websocket` |
 | `WACALLS_MAX_CALLS` | `8` | Equivalente a `-max-calls-per-session` |
-| `WACALLS_RING_TIMEOUT_SECONDS` | — | Expira chamada recebida que nunca é encerrada |
+| `WACALLS_RING_TIMEOUT_SECONDS` | `60` (`90` no modo só ligações) | Expira chamada recebida que fica tocando sem encerramento (`0` desliga) |
+| `WACALLS_AUTO_REJECT` | `true` (`false` no modo só ligações) | Recusas automáticas (toque expirado e limite de chamadas) mandam `reject` ao WhatsApp, o que encerra para quem ligou e para o celular. Com `false` a chamada só sai do painel (ou nem entra) |
+| `WACALLS_CALLS_ONLY` | off | Modo só ligações: sem presença, sem recibo de leitura, sem guardar mensagens, sem Chatwoot, sem SIP; rotas de mensagem/disparo respondem 403. Ver [guias/so-ligacoes.md](guias/so-ligacoes.md) |
 | `WACALLS_UNIFIED_SESSION_MINUTES` | `5` | Intervalo mínimo entre os sinais "unified session" enviados ao conectar, como faz o WhatsApp Web (`0` desliga) |
 | `WACALLS_DEVICE_NAME` | `Windows` | Nome do aparelho em "Dispositivos conectados" (vale para pareamentos novos) |
 | `WACALLS_DEVICE_BROWSER` | `chrome` | Ícone/plataforma do aparelho: `chrome`, `edge`, `firefox`, `safari` ou `desktop` |
@@ -282,7 +284,10 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_PUBLIC_BASE_URL` | — | Base pública p/ URLs de gravação, formulários e widget (ex.: `https://call.seudominio.com`) |
 | `WACALLS_WIDGET_KEY` | — | Chave-mestra para emitir tokens de widget (`POST /api/widget-tokens`) |
 | `WACALLS_WIDGET_SIGNING_SECRET` | — | Segredo de assinatura dos tokens de widget |
-| `WACALLS_SIP_ADDR` | `0.0.0.0:5060` | Endereço do servidor SIP (UDP + TCP) |
+| `WACALLS_EMBED_ORIGINS` | — | Origens (ex.: `https://chat.sualoja.com.br`) que podem embutir `/embed/chatwoot` (aba Ligações no Chatwoot). Vazio = ninguém; o resto do painel nunca é embutível |
+| `WACALLS_EMBED_INBOXES` | — | Caixa de entrada do Chatwoot → sessão, ex.: `12=ID,13=ID2` (o painel do admin também edita) |
+| `WACALLS_EMBED_PHONE_ATTRS` | `waha_whatsapp_jid,waha_whatsapp_chat_id,waha_whatsapp_lid` | Atributos do contato consultados quando ele não tem telefone |
+| `WACALLS_SIP_ADDR` | `0.0.0.0:5060` | Endereço do servidor SIP (UDP + TCP). `off` desliga; no modo só ligações o padrão é desligado |
 | `WACALLS_SIP_ADVERTISE_PORT` | `5060` | Porta SIP anunciada no `Contact` (registro em PBX externo) |
 | `WACALLS_RTP_PORT_MIN` / `_MAX` | `40000` / `40049` | Faixa fixa de portas RTP do SIP (publique em `mode=host`) |
 | `WACALLS_SIP_DEBUG` | off | Logs detalhados de mídia SIP/grupo (**só para diagnóstico** — gera muito log) |

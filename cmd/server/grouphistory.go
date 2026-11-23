@@ -384,7 +384,7 @@ func (s *Session) shareGroupHistory(ctx context.Context, gid types.JID, to []str
 	}
 	// aviso para o grupo todo ("X compartilhou o histórico com Y"). Falha aqui não
 	// desfaz o envio do pacote — só é registrada.
-	if r, nerr := s.client.SendMessage(ctx, gid, &waE2E.Message{
+	if r, nerr := s.send(ctx, gid, &waE2E.Message{
 		MessageHistoryNotice: &waE2E.MessageHistoryNotice{MessageHistoryMetadata: meta},
 	}); nerr != nil {
 		s.log.Warn("group history: aviso no grupo falhou (pacote já enviado)", "group", gid.String(), "err", nerr)

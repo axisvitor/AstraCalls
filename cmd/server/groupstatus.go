@@ -93,7 +93,7 @@ func (s *server) handleGroupStatus(w http.ResponseWriter, r *http.Request) {
 	if id := messageIDFromRequest(r); id != "" {
 		extra.ID = types.MessageID(id)
 	}
-	resp, err := sess.client.SendMessage(r.Context(), gid, msg, extra)
+	resp, err := sess.send(r.Context(), gid, msg, extra)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

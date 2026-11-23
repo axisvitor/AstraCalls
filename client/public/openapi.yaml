@@ -22,6 +22,20 @@ info:
     (`/api/sessions/{sid}/calls...`): a chave estática `WACALLS_WIDGET_KEY`
     (`GET /api/widget-key`) ou um token efêmero por conta (`POST /api/widget-tokens`, recomendado).
 
+    ## Atendentes (usuário e senha)
+    O administrador (chave-mestra) cria atendentes em `POST /api/agents`, cada um com as
+    sessões liberadas. O atendente entra em `POST /api/agent/login` e recebe um **token**
+    (validade 12 h) que vai no lugar da API key (`X-API-Key` ou `?apiKey=`). Com ele só
+    funcionam `GET /api/config`, `GET /api/events`, `GET /api/sessions` (filtrada) e a
+    superfície de chamadas das sessões dele (ligar, atender, recusar, espera, mudo,
+    transferir, pegar, desligar, histórico). O resto responde **403**.
+
+    ## Modo só ligações
+    Com `WACALLS_CALLS_ONLY=true` o servidor não envia presença nem recibos de leitura,
+    não guarda conteúdo de mensagens, ignora a integração Chatwoot e não abre a porta SIP.
+    As rotas de mensagem, disparo, agendamento, status, presença, Chatwoot e MCP respondem
+    **403** `{"error":"desativado no modo só ligações (WACALLS_CALLS_ONLY)","code":"calls_only"}`.
+
     ## Erros comuns
     Os erros vêm em JSON no formato `{"error": "mensagem"}` (às vezes com campos extras,
     ex.: `status`). Valem para todas as rotas e não são repetidos em cada uma:
@@ -47,6 +61,8 @@ tags:
     description: Contas WhatsApp (cada sessão = um device linkado)
   - name: Chamadas
     description: Iniciar, atender, rejeitar e encerrar chamadas
+  - name: Atendentes
+    description: Usuários com acesso só às chamadas das sessões liberadas (login por senha)
   - name: SIP
     description: Gateway SIP (sipgo nativo, sem Asterisk) — modelo 1 (PBX registra aqui) e modelo 2 (registrar em PBX externo, com outbound proxy)
   - name: Mensagens
@@ -321,7 +337,16 @@ components:
         status: { type: string, enum: [starting, ringing, connected, ended] }
         held: { type: boolean }
         endedAt: { type: integer, format: int64, description: "epoch ms (só no histórico)" }
-        endReason: { type: string }
+        endReason: { type: string, description: "ex.: user_ended, declined, timeout, accepted_elsewhere" }
+        missed: { type: boolean, description: "Recebida e não atendida aqui nem em outro aparelho (só no histórico)" }
+        agent: { type: string, description: "Nome do atendente que atendeu/ligou (só no histórico)" }
+    Agent:
+      type: object
+      properties:
+        id: { type: string }
+        username: { type: string, example: maria }
+        name: { type: string, example: "Maria Vendas" }
+        sessions: { type: array, items: { type: string }, description: "IDs das sessões liberadas" }
     PrivacySettings:
       type: object
       description: "Mesmo formato (camelCase) no GET /privacy e no `settings` do PUT."
@@ -491,6 +516,155 @@ paths:
                   groupCalls: { type: boolean, example: false, description: "Chamada em grupo (experimental) habilitada nesta instância (WACALLS_GROUP_CALLS)" }
                   publicIp: { type: string, example: "203.0.113.10", description: "IP público anunciado no WebRTC/SIP (só quando conhecido)" }
                   publicIpSource: { type: string, example: "stun:stun.l.google.com:19302", description: "De onde veio o publicIp (env, interface, stun:…, http:…)" }
+                  callsOnly: { type: boolean, description: "Servidor em modo só ligações (WACALLS_CALLS_ONLY)" }
+                  role: { type: string, enum: [admin, agent], description: "Quem está chamando: chave-mestra/widget (admin) ou atendente" }
+                  agent: { $ref: "#/components/schemas/Agent" }
+
+  /api/agent/login:
+    post:
+      tags: [Atendentes]
+      summary: Login de atendente (aberto, sem API key)
+      description: >
+        Devolve um token com validade de 12 h para usar como `X-API-Key`. Depois de 5 senhas
+        erradas seguidas o usuário fica travado por 15 minutos (429). Trocar a senha ou
+        remover o atendente invalida os tokens já emitidos.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, example: "at1.eyJpZCI6Ii4uLiJ9.xxxx" }
+                  expiresAt: { type: string, format: date-time }
+                  agent: { $ref: "#/components/schemas/Agent" }
+        "401": { description: "usuário ou senha inválidos" }
+        "429": { description: "muitas tentativas erradas; tente de novo mais tarde" }
+
+  /api/agent/refresh:
+    post:
+      tags: [Atendentes]
+      summary: Troca o token válido do atendente por um novo (mais 12 h)
+      responses:
+        "200": { description: "{token, expiresAt, agent}" }
+        "400": { description: só para atendente }
+
+  /api/embed/config:
+    get:
+      tags: [Atendentes]
+      summary: Configuração da aba Ligações no Chatwoot (atendente e admin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inboxes: { type: object, additionalProperties: { type: string }, description: "ID da caixa de entrada do Chatwoot -> ID da sessão" }
+                  phoneAttrs: { type: array, items: { type: string }, description: "Atributos do contato com o número, em ordem" }
+    put:
+      tags: [Atendentes]
+      summary: Salva a configuração da aba Ligações (só chave-mestra; vence as variáveis de ambiente)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                inboxes: { type: object, additionalProperties: { type: string } }
+                phoneAttrs: { type: array, items: { type: string } }
+      responses:
+        "200": { description: Configuração efetiva }
+
+  /api/sessions/{sid}/lid-phone:
+    get:
+      tags: [Contatos]
+      summary: Telefone real de um @lid pelo mapa da sessão
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: lid, in: query, required: true, schema: { type: string, example: "123456789012345@lid" } }
+      responses:
+        "200": { description: "{phone}" }
+        "404": { description: número ainda não conhecido }
+
+  /api/agents:
+    get:
+      tags: [Atendentes]
+      summary: Lista os atendentes (só chave-mestra)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents: { type: array, items: { $ref: "#/components/schemas/Agent" } }
+    post:
+      tags: [Atendentes]
+      summary: Cria um atendente (só chave-mestra)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, description: "3 a 32 caracteres: a-z, 0-9, . _ -" }
+                name: { type: string }
+                password: { type: string, minLength: 8 }
+                sessions: { type: array, items: { type: string } }
+      responses:
+        "201":
+          description: Criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent: { $ref: "#/components/schemas/Agent" }
+        "400": { description: "dados inválidos ou usuário repetido" }
+
+  /api/agents/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [Atendentes]
+      summary: Altera nome, senha e/ou sessões liberadas (só chave-mestra)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                password: { type: string, minLength: 8 }
+                sessions: { type: array, items: { type: string } }
+      responses:
+        "200": { description: OK }
+        "404": { description: atendente não encontrado }
+    delete:
+      tags: [Atendentes]
+      summary: Remove o atendente (os tokens dele param na hora; só chave-mestra)
+      responses:
+        "204": { description: Removido }
+        "404": { description: atendente não encontrado }
 
   /api/widget-key:
     get:
@@ -1793,10 +1967,13 @@ paths:
   /api/sessions/{sid}/history:
     get:
       tags: [Eventos & Histórico]
-      summary: Histórico de chamadas da conta (últimas 50)
-      description: Histórico em memória (zera ao reiniciar o servidor), mais recentes primeiro.
+      summary: Histórico de chamadas da conta (padrão últimas 50)
+      description: >
+        Mais recentes primeiro. Gravado no Postgres (tabela call_history) e recarregado ao
+        subir o servidor. Chamadas perdidas vêm com `missed: true`.
       parameters:
         - { $ref: "#/components/parameters/Sid" }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 2000 } }
         - { $ref: "#/components/parameters/ClientId" }
       responses:
         "200":

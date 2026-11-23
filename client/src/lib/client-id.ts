@@ -1,3 +1,5 @@
+import { storage } from "./storage";
+
 const KEY = "wacalls.clientId";
 
 const generate = (): string => {
@@ -6,10 +8,10 @@ const generate = (): string => {
 };
 
 export const getClientId = (): string => {
-  let id = localStorage.getItem(KEY);
+  let id = storage.get(KEY);
   if (!id) {
     id = generate();
-    localStorage.setItem(KEY, id);
+    storage.set(KEY, id);
   }
   return id;
 };

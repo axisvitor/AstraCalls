@@ -226,7 +226,7 @@ func TestWidgetTokenSoOperaSessaoDaPropriaConta(t *testing.T) {
 	t.Setenv("WACALLS_API_KEY", "mestra")
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	scope := func(sid string) (int, int) { return map[string]int{"s7": 7, "s9": 9}[sid], 61 }
-	h := withAuth(ok, "mestra", "estatica", scope)
+	h := withAuth(ok, "mestra", "estatica", scope, nil)
 	tok := signWidgetToken(widgetTokenClaims{AccountID: 7, Exp: time.Now().Add(time.Hour).Unix()})
 	for path, want := range map[string]int{
 		"/api/sessions/s7/calls":                               http.StatusNoContent,

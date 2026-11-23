@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
@@ -15,7 +16,9 @@ type server struct {
 	log       *slog.Logger
 	staticDir string
 	sipGW     *SIPGateway
-	apiMux    *http.ServeMux // usado pelo MCP para despachar as ferramentas em processo
+	agents    *agentDirectory // atendentes (usuário/senha) — ver agents.go
+	embed     *embedSettings  // aba Ligações no Chatwoot — ver embed.go
+	apiMux    *http.ServeMux  // usado pelo MCP para despachar as ferramentas em processo
 }
 
 // newServer monta o provedor de banco (Postgres, 1 banco por sessão no estilo
@@ -40,7 +43,29 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 		return nil, err
 	}
 
+	agents, err := newAgentDirectory(ctx, mainDB)
+	if err != nil {
+		return nil, err
+	}
+
+	embed, err := newEmbedSettings(ctx, mainDB)
+	if err != nil {
+		return nil, err
+	}
+
 	broker := NewBroker()
+	if rows, err := store.recentCalls(ctx, callHistoryLoad); err != nil {
+		log.Warn("histórico de chamadas: não carregou do banco", "err", err)
+	} else {
+		broker.loadHistory(rows)
+	}
+	broker.OnEnded = func(rec CallRecord) {
+		go func() {
+			if err := store.saveCall(context.Background(), rec); err != nil {
+				log.Warn("histórico de chamadas: não gravou", "call_id", rec.CallID, "err", err)
+			}
+		}()
+	}
 	mgr := newSessionManager(ctx, provider, broker, store, waLogger, log, maxCalls)
 	broker.SessionsFn = mgr.infos
 	broker.AccountForSession = mgr.accountIDForSession
@@ -48,10 +73,11 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	broker.InboxForSession = mgr.inboxIDForSession
 
 	// Gateway SIP: o PBX/softphone do cliente se registra aqui (modelo Wavoip).
-	// Endereço configurável por WACALLS_SIP_ADDR (padrão 0.0.0.0:5060).
-	sipAddr := os.Getenv("WACALLS_SIP_ADDR")
-	if sipAddr == "" {
-		sipAddr = "0.0.0.0:5060"
+	srv := &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir, agents: agents, embed: embed}
+	sipAddr, sipOn := sipListenAddr()
+	if !sipOn {
+		log.Info("SIP desativado (WACALLS_SIP_ADDR=off ou modo só ligações): porta SIP não aberta")
+		return srv, nil
 	}
 	sipGateway, err := NewSIPGateway(mgr, log)
 	if err != nil {
@@ -62,7 +88,24 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 		mgr.sipExtApply = sipGateway.applyExtRegistration
 		mgr.sipExtRemove = sipGateway.removeExtRegistration
 		_ = sipGateway.Start(ctx, sipAddr)
+		srv.sipGW = sipGateway
 	}
+	return srv, nil
+}
 
-	return &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir, sipGW: sipGateway}, nil
+// sipListenAddr devolve onde o gateway SIP escuta e se ele deve subir. Endereço por
+// WACALLS_SIP_ADDR (padrão 0.0.0.0:5060); "off"/"0"/"false" desliga. No modo só
+// ligações o padrão é desligado: só sobe se WACALLS_SIP_ADDR for setado.
+func sipListenAddr() (string, bool) {
+	addr := strings.TrimSpace(os.Getenv("WACALLS_SIP_ADDR"))
+	switch strings.ToLower(addr) {
+	case "off", "0", "false", "no", "disabled":
+		return "", false
+	case "":
+		if callsOnly {
+			return "", false
+		}
+		return "0.0.0.0:5060", true
+	}
+	return addr, true
 }

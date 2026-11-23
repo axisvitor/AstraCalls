@@ -1,8 +1,9 @@
 import { create } from "zustand";
+import { storage } from "@/lib/storage";
 
 type Theme = "light" | "dark";
 const initial: Theme =
-  (localStorage.getItem("theme") as Theme | null) ??
+  (storage.get("theme") as Theme | null) ??
   (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 
 export const useTheme = create<{ theme: Theme; toggle: () => void }>((set) => ({
@@ -10,7 +11,7 @@ export const useTheme = create<{ theme: Theme; toggle: () => void }>((set) => ({
   toggle: () =>
     set((s) => {
       const next: Theme = s.theme === "dark" ? "light" : "dark";
-      localStorage.setItem("theme", next);
+      storage.set("theme", next);
       return { theme: next };
     }),
 }));

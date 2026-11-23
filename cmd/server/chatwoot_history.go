@@ -101,7 +101,7 @@ func (s *server) handleImportHistoryNow(w http.ResponseWriter, r *http.Request) 
 			Timestamp:     time.UnixMilli(a.TS),
 		}
 		reqMsg := sess.client.BuildHistorySyncRequest(info, count)
-		if _, err := sess.client.SendMessage(r.Context(), *ownID, reqMsg, whatsmeow.SendRequestExtra{Peer: true}); err != nil {
+		if _, err := sess.send(r.Context(), *ownID, reqMsg, whatsmeow.SendRequestExtra{Peer: true}); err != nil {
 			sess.log.Warn("import histórico on-demand: falha ao pedir", "chat", a.ChatJID, "err", err)
 			continue
 		}

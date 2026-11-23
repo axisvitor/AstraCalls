@@ -87,4 +87,4 @@ export function runPasskeyAssertion(publicKey: WebAuthnPublicKey): Promise<WebAu
 }
 
 // download da extensão (zip servido pelo próprio backend, na mesma origem)
-export const EXTENSION_DOWNLOAD_URL = "/astracalls-passkey.zip";
+export const EXTENSION_DOWNLOAD_URL = "astracalls-passkey.zip";

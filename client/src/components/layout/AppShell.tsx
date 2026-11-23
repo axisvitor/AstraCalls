@@ -6,10 +6,16 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import { useVersion } from "@/hooks/useVersion";
+import { useAuthInfo } from "@/stores/auth";
+import { AgentsDialog } from "@/components/domain/session/AgentsDialog";
+import { EmbedDialog } from "@/components/domain/session/EmbedDialog";
 
 export const AppShell = ({ children }: { children: ReactNode }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { label: version, commit } = useVersion();
+  const auth = useAuthInfo();
+  const isAgent = auth.role === "agent";
+  const lean = isAgent || auth.callsOnly;
 
   return (
     <div className="min-h-screen bg-background p-3 sm:p-4">
@@ -37,7 +43,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
                 </SheetContent>
               </Sheet>
               <span className="inline-flex md:hidden dark:rounded-lg dark:bg-white dark:px-1.5 dark:py-1">
-                <img src="/logoCalls.png" alt="AstraCalls" className="h-6 w-auto select-none" draggable={false} />
+                <img src="logoCalls.png" alt="AstraCalls" className="h-6 w-auto select-none" draggable={false} />
               </span>
               <h1 className="hidden truncate text-2xl font-bold tracking-tight text-foreground md:block">
                 Chamadas
@@ -49,9 +55,17 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
               )}
             </div>
             <div className="flex items-center gap-2">
+              {isAgent && auth.agent && (
+                <span className="hidden max-w-[12rem] truncate text-sm text-muted-foreground sm:inline" title="Atendente conectado">
+                  {auth.agent.name}
+                </span>
+              )}
+              {!isAgent && <AgentsDialog />}
+              {!isAgent && <EmbedDialog />}
+              {!lean && (
               <Button variant="outline" size="icon" className="rounded-full" asChild>
                 <a
-                  href="/api-docs.html"
+                  href="api-docs.html"
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="Documentação da API"
@@ -60,6 +74,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
                   <BookOpen className="h-4 w-4" />
                 </a>
               </Button>
+              )}
               <ThemeToggle />
               {isAuthed() && (
                 <Button

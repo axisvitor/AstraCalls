@@ -44,31 +44,42 @@ type widgetTokenClaims struct {
 }
 
 func signWidgetToken(c widgetTokenClaims) string {
-	payload, _ := json.Marshal(c)
-	p := base64.RawURLEncoding.EncodeToString(payload)
-	body := widgetTokenPrefix + "." + p
-	mac := hmac.New(sha256.New, widgetSigningSecret())
+	return signHMACToken(widgetTokenPrefix, widgetSigningSecret(), c)
+}
+
+// signHMACToken monta um token auto-contido "prefixo.payload.assinatura" (payload =
+// JSON em base64url, assinatura = HMAC-SHA256). Usado pelos tokens de widget e de
+// atendente.
+func signHMACToken(prefix string, secret []byte, claims any) string {
+	payload, _ := json.Marshal(claims)
+	body := prefix + "." + base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(body))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return body + "." + sig
+	return body + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// parseHMACToken confere prefixo e assinatura e decodifica o payload em out. Não
+// olha expiração (cada tipo de token valida os próprios campos).
+func parseHMACToken(prefix string, secret []byte, tok string, out any) bool {
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 || parts[0] != prefix {
+		return false
+	}
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(parts[0] + "." + parts[1]))
+	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(expected), []byte(parts[2])) {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	return err == nil && json.Unmarshal(payload, out) == nil
 }
 
 // parseWidgetToken valida prefixo, assinatura e expiração. Só devolve ok=true para
 // um token íntegro e ainda válido.
 func parseWidgetToken(tok string) (widgetTokenClaims, bool) {
 	var c widgetTokenClaims
-	parts := strings.Split(tok, ".")
-	if len(parts) != 3 || parts[0] != widgetTokenPrefix {
-		return c, false
-	}
-	mac := hmac.New(sha256.New, widgetSigningSecret())
-	mac.Write([]byte(parts[0] + "." + parts[1]))
-	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(expected), []byte(parts[2])) {
-		return c, false
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil || json.Unmarshal(payload, &c) != nil {
+	if !parseHMACToken(widgetTokenPrefix, widgetSigningSecret(), tok, &c) {
 		return c, false
 	}
 	if c.AccountID <= 0 || c.Exp <= time.Now().Unix() {

@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { openAdaptiveCall as openCall } from "@/lib/webrtc";
 import { acceptCall, endCall } from "@/services/calls";
 import { registerOwnConnection, clearIncoming } from "@/stores/calls";
+import { MIC_DENIED_MSG, micDenied } from "@/lib/mic";
 
 export const useAcceptCall = (micId: string | null) =>
   useMutation({
@@ -25,6 +26,6 @@ export const useAcceptCall = (micId: string | null) =>
         clearIncoming();
         return;
       }
-      toast.error(e.message);
+      toast.error(micDenied(e) ? MIC_DENIED_MSG : e.message);
     },
   });
