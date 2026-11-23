@@ -175,6 +175,9 @@ func (s *Session) selfSentOrigin(id string) (origin string, ok bool) {
 // conta não é admin, o whatsmeow recusa na hora (ErrNoPermissionInGroup) em vez
 // de mandar uma mensagem que o WhatsApp descarta.
 func (s *Session) sendResolvingLID(ctx context.Context, jid types.JID, msg *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+	if callsOnly {
+		return whatsmeow.SendResponse{}, errCallsOnlySend // antes de consultar o WhatsApp
+	}
 	if jid.Server == types.GroupServer {
 		if len(extra) == 0 {
 			extra = []whatsmeow.SendRequestExtra{{}}
@@ -182,28 +185,37 @@ func (s *Session) sendResolvingLID(ctx context.Context, jid types.JID, msg *waE2
 		extra[0].CheckPermissions = true
 	}
 	jid = s.canonicalBRTarget(ctx, jid)
-	resp, err := s.client.SendMessage(ctx, jid, msg, extra...)
+	resp, err := s.send(ctx, jid, msg, extra...)
 	if errors.Is(err, whatsmeow.ErrNoPermissionInGroup) {
 		// o cache de grupo do whatsmeow só é atualizado por notificações; se o
 		// grupo mudou com a sessão offline (deixou de ser só de admins, conta
 		// promovida) ele está velho. Rebusca as informações (atualiza o cache)
 		// e tenta uma vez antes de recusar.
 		if _, gerr := s.client.GetGroupInfo(ctx, jid); gerr == nil {
-			resp, err = s.client.SendMessage(ctx, jid, msg, extra...)
+			resp, err = s.send(ctx, jid, msg, extra...)
 		}
 	}
 	if err != nil && isLIDResolveErr(err) && jid.Server == types.DefaultUserServer {
 		if lid, pn, ok := s.resolveCanonical(ctx, jid); ok {
 			s.client.StoreLIDPNMapping(ctx, lid, pn)
 			s.log.Info("reenvio após gravar mapeamento LID", "orig", jid.String(), "lid", lid.String(), "pn", pn.String())
-			resp, err = s.client.SendMessage(ctx, pn, msg, extra...)
+			resp, err = s.send(ctx, pn, msg, extra...)
 			if err != nil {
 				s.log.Warn("envio pelo PN falhou; tentando @lid direto", "err", err, "lid", lid.String())
-				resp, err = s.client.SendMessage(ctx, lid, msg, extra...)
+				resp, err = s.send(ctx, lid, msg, extra...)
 			}
 		}
 	}
 	return resp, err
+}
+
+// send é o ponto ÚNICO de envio de mensagem ao WhatsApp: todo envio passa por
+// aqui (direto ou via sendResolvingLID). No modo só ligações recusa tudo.
+func (s *Session) send(ctx context.Context, jid types.JID, msg *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+	if callsOnly {
+		return whatsmeow.SendResponse{}, errCallsOnlySend
+	}
+	return s.client.SendMessage(ctx, jid, msg, extra...)
 }
 
 func (s *Session) sendAndMark(ctx context.Context, jid types.JID, msg *waE2E.Message) (string, error) {
@@ -650,14 +662,25 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
 // queda de rede). Sem isso a chamada ficava pendurada pra sempre, entupindo o
 // limite (WACALLS_MAX_CALLS) e fazendo novas chamadas serem recusadas sozinhas —
 // só um restart do processo liberava. 0 desliga o timeout.
-var ringTimeoutSecs = envInt("WACALLS_RING_TIMEOUT_SECONDS", 60)
+var ringTimeoutSecs = envInt("WACALLS_RING_TIMEOUT_SECONDS", defaultRingTimeout())
 
-// ringTimeoutReject: ao expirar o toque, recusa a chamada no WhatsApp — isso
-// encerra a ligação para quem ligou E para os outros aparelhos do número (o
-// celular para de tocar). Padrão ligado; no modo só ligações o padrão é desligado:
-// a chamada só sai do painel e o celular da loja continua tocando.
-// WACALLS_RING_TIMEOUT_REJECT=true/false sobrescreve.
-var ringTimeoutReject = envBoolDefault("WACALLS_RING_TIMEOUT_REJECT", !callsOnly)
+// defaultRingTimeout: 60 s; no modo só ligações 90 s, acima do tempo que o próprio
+// WhatsApp deixa tocar, para o encerramento normal (inclusive "atendida em outro
+// aparelho") chegar antes e o timer só pegar chamada travada.
+func defaultRingTimeout() int {
+	if callsOnly {
+		return 90
+	}
+	return 60
+}
+
+// autoReject: recusas que o servidor faz SOZINHO (toque expirado e limite de
+// chamadas simultâneas) mandam <reject> ao WhatsApp — isso encerra a ligação para
+// quem ligou E para os outros aparelhos do número (o celular para de tocar).
+// Padrão ligado; no modo só ligações o padrão é desligado: a chamada só sai do
+// painel (ou nem entra, no limite) e o celular da loja continua tocando.
+// WACALLS_AUTO_REJECT=true/false sobrescreve. Recusar pelo painel continua recusando.
+var autoReject = envBoolDefault("WACALLS_AUTO_REJECT", !callsOnly)
 
 func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	node := wrapCall(evt.From, evt.Data)
@@ -674,7 +697,11 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 		return
 	}
 	if max := s.mgr.maxCalls; max > 0 && s.activeCallCount() >= max {
-		s.rejectOffer(ctx, node, evt.From)
+		if autoReject {
+			s.rejectOffer(ctx, node, evt.From)
+		} else {
+			s.log.Info("chamada recebida ignorada: limite de chamadas (sem recusar; o celular segue tocando)", "call_id", callID)
+		}
 		return
 	}
 	cm := s.createCall(callID, s.getRecording())
@@ -727,9 +754,11 @@ func (s *Session) expireRingingCall(callID string) {
 		return // atendida (corrida com o timer): não expira
 	}
 	s.log.Info("chamada expirada por timeout de toque (nunca recebeu encerramento do WhatsApp)",
-		"call_id", callID, "timeout_s", ringTimeoutSecs, "reject", ringTimeoutReject)
-	if ringTimeoutReject {
+		"call_id", callID, "timeout_s", ringTimeoutSecs, "reject", autoReject)
+	if autoReject {
 		_ = ac.cm.RejectCall(s.mgr.appCtx, callID, core.EndCallReasonTimeout)
+	} else {
+		ac.cm.DropLocal(core.EndCallReasonTimeout) // só libera aqui; nada vai ao WhatsApp
 	}
 	s.removeCall(callID)
 	s.mgr.broker.endCall(callID, string(core.EndCallReasonTimeout))

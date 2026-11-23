@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -50,12 +51,19 @@ var callsOnlyBlockedSessionRoutes = map[string]bool{
 	"mcp-keys":     true, // MCP envia mensagens
 }
 
+// errCallsOnlySend é o que Session.send devolve no modo só ligações.
+var errCallsOnlySend = errors.New("envio de mensagem desativado no modo só ligações (WACALLS_CALLS_ONLY)")
+
 // callsOnlyBlocked diz se a rota está desativada no modo só ligações.
 func callsOnlyBlocked(p string) bool {
 	if rest, ok := strings.CutPrefix(p, "/api/sessions/"); ok {
 		_, rest, _ = strings.Cut(rest, "/")
-		first, _, _ := strings.Cut(rest, "/")
-		return callsOnlyBlockedSessionRoutes[first]
+		segs := strings.Split(rest, "/")
+		// status do grupo e compartilhar histórico do grupo também mandam mensagem
+		if len(segs) >= 3 && segs[0] == "groups" && (segs[2] == "status" || segs[2] == "history") {
+			return true
+		}
+		return callsOnlyBlockedSessionRoutes[segs[0]]
 	}
 	return strings.HasPrefix(p, "/api/chatwoot/") || p == "/api/mcp" || p == "/mcp" || strings.HasPrefix(p, "/mcp/")
 }

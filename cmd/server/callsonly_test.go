@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -136,5 +141,65 @@ func TestSIPListenAddr(t *testing.T) {
 		if addr != c.addr || on != c.listen {
 			t.Errorf("callsOnly=%v env=%q: (%q,%v), quer (%q,%v)", c.calls, c.env, addr, on, c.addr, c.listen)
 		}
+	}
+}
+
+// Envio de mensagem: o ponto único (Session.send) e o sendResolvingLID recusam em
+// modo só ligações sem tocar no cliente do WhatsApp (nil aqui).
+func TestCallsOnlyBlocksSends(t *testing.T) {
+	s := &Session{}
+	jid := types.NewJID("5511999999999", types.DefaultUserServer)
+	setCallsOnly(t, true)
+	var err error
+	if panics(func() { _, err = s.send(context.Background(), jid, nil) }) || !errors.Is(err, errCallsOnlySend) {
+		t.Fatalf("send: err=%v", err)
+	}
+	if panics(func() { _, err = s.sendResolvingLID(context.Background(), jid, nil) }) || !errors.Is(err, errCallsOnlySend) {
+		t.Fatalf("sendResolvingLID: err=%v", err)
+	}
+	callsOnly = false
+	panics(func() { _, err = s.send(context.Background(), jid, nil) })
+	if errors.Is(err, errCallsOnlySend) {
+		t.Fatal("modo normal recusou o envio")
+	}
+	// rotas de grupo que mandam mensagem também ficam de fora
+	setCallsOnly(t, true)
+	for _, p := range []string{"/api/sessions/s1/groups/123@g.us/status", "/api/sessions/s1/groups/123@g.us/history/share"} {
+		if !callsOnlyBlocked(p) {
+			t.Errorf("%s deveria ser bloqueada", p)
+		}
+	}
+	if callsOnlyBlocked("/api/sessions/s1/groups/123@g.us") {
+		t.Error("consultar grupo não manda mensagem")
+	}
+}
+
+// No limite de chamadas, sem recusa automática a oferta é só ignorada (nada vai
+// ao WhatsApp); com ela, sai o <reject> (rejectOffer, visto pelo log).
+func TestCapacityWithoutAutoReject(t *testing.T) {
+	prev := autoReject
+	t.Cleanup(func() { autoReject = prev })
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, nil))
+	mgr := &SessionManager{broker: NewBroker(), log: log, maxCalls: 1, sessions: map[string]*Session{}}
+	s := &Session{id: "s1", mgr: mgr, log: log, reg: newCallRegistry()}
+	s.reg.add("ocupada", &activeCall{spies: newSpyHub()})
+	peer := types.NewJID("5511988887777", types.DefaultUserServer)
+	evt := &events.CallOffer{BasicCallMeta: types.BasicCallMeta{From: peer, CallID: "c2", CallCreator: peer},
+		Data: &waBinary.Node{Tag: "offer", Attrs: waBinary.Attrs{"call-id": "c2", "call-creator": peer}}}
+
+	autoReject = false
+	panics(func() { s.onIncomingOffer(context.Background(), evt) })
+	if strings.Contains(logBuf.String(), "inbound call rejected") || !strings.Contains(logBuf.String(), "ignorada") {
+		t.Fatalf("sem recusa automática: log = %s", logBuf.String())
+	}
+	if s.reg.count() != 1 {
+		t.Fatal("chamada acima do limite entrou no registro")
+	}
+	logBuf.Reset()
+	autoReject = true
+	panics(func() { s.onIncomingOffer(context.Background(), evt) })
+	if !strings.Contains(logBuf.String(), "inbound call rejected") {
+		t.Fatalf("com recusa automática deveria recusar: log = %s", logBuf.String())
 	}
 }

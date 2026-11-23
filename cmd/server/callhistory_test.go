@@ -3,7 +3,15 @@ package main
 import (
 	"context"
 	"log/slog"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"wacalls/internal/voip/call"
+
+	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/types"
 )
 
 // Chamada perdida = recebida, nunca conectada, sem ninguém atendendo no painel e
@@ -53,26 +61,89 @@ func TestLoadHistoryOrder(t *testing.T) {
 	}
 }
 
-// Com WACALLS_RING_TIMEOUT_REJECT desligado (padrão no modo só ligações) o toque
-// expirado só sai do painel: nada é enviado ao WhatsApp (o cm nil entraria em
-// pânico se RejectCall fosse chamado) e a chamada vira perdida.
-func TestRingTimeoutWithoutReject(t *testing.T) {
-	prev := ringTimeoutReject
-	t.Cleanup(func() { ringTimeoutReject = prev })
+// recSock é um core.VoipSocket que só registra o que sairia para o WhatsApp.
+type recSock struct {
+	mu   sync.Mutex
+	tags []string
+}
 
-	newSess := func() (*Session, *Broker) {
-		b := NewBroker()
-		mgr := &SessionManager{broker: b, log: slog.Default(), appCtx: context.Background(), sessions: map[string]*Session{}}
-		s := &Session{id: "s1", mgr: mgr, log: slog.Default(), reg: newCallRegistry()}
-		s.reg.add("c1", &activeCall{spies: newSpyHub()})
-		b.upsertCall(CallRecord{SessionID: "s1", CallID: "c1", Direction: "inbound", Status: StatusRinging})
-		return s, b
+func (f *recSock) add(n waBinary.Node) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	tag := n.Tag
+	if ch, ok := n.Content.([]waBinary.Node); ok && len(ch) > 0 {
+		tag += "/" + ch[0].Tag
 	}
+	f.tags = append(f.tags, tag)
+}
+func (f *recSock) sent() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.tags...)
+}
+func (f *recSock) OwnPN() types.JID  { return types.NewJID("5511900000000", types.DefaultUserServer) }
+func (f *recSock) OwnLID() types.JID { return types.NewJID("999", types.HiddenUserServer) }
+func (f *recSock) AccountDeviceIdentityNode() (waBinary.Node, bool) {
+	return waBinary.Node{}, false
+}
+func (f *recSock) SendNode(_ context.Context, n waBinary.Node) error { f.add(n); return nil }
+func (f *recSock) Query(_ context.Context, n waBinary.Node) (*waBinary.Node, error) {
+	f.add(n)
+	return &waBinary.Node{}, nil
+}
+func (f *recSock) GetUSyncDevices(context.Context, []types.JID) ([]types.JID, error) { return nil, nil }
+func (f *recSock) AssertSessions(context.Context, []types.JID, bool) error           { return nil }
+func (f *recSock) CreateParticipantNodes(context.Context, []types.JID, []byte, waBinary.Attrs) ([]waBinary.Node, bool, error) {
+	return nil, false, nil
+}
+func (f *recSock) DecryptCallKey(context.Context, types.JID, *waBinary.Node) ([]byte, error) {
+	return nil, nil
+}
+func (f *recSock) GetTCToken(context.Context, types.JID) ([]byte, error)     { return nil, nil }
+func (f *recSock) ResolveLIDForPN(_ context.Context, pn types.JID) types.JID { return pn }
 
-	ringTimeoutReject = false
-	s, b := newSess()
-	if panics(func() { s.expireRingingCall("c1") }) {
-		t.Fatal("sem rejeitar, mas tentou recusar no WhatsApp")
+// ringingSession monta uma sessão com uma chamada RECEBIDA tocando (offer real
+// processado por um CallManager com socket falso).
+func ringingSession(t *testing.T) (*Session, *Broker, *recSock) {
+	t.Helper()
+	b := NewBroker()
+	mgr := &SessionManager{broker: b, log: slog.Default(), appCtx: context.Background(), sessions: map[string]*Session{}}
+	s := &Session{id: "s1", mgr: mgr, log: slog.Default(), reg: newCallRegistry()}
+	sock := &recSock{}
+	cm := call.NewCallManager(sock, slog.Default())
+	s.reg.add("c1", &activeCall{cm: cm, spies: newSpyHub()})
+	peer := types.NewJID("5511988887777", types.DefaultUserServer)
+	cm.HandleCallOffer(context.Background(), wrapCall(peer, &waBinary.Node{
+		Tag: "offer", Attrs: waBinary.Attrs{"call-id": "c1", "call-creator": peer},
+	}), peer, "")
+	b.upsertCall(CallRecord{SessionID: "s1", CallID: "c1", Direction: "inbound", Status: StatusRinging})
+	return s, b, sock
+}
+
+func waitTags(sock *recSock, want string) bool {
+	for i := 0; i < 50; i++ {
+		for _, tg := range sock.sent() {
+			if strings.Contains(tg, want) {
+				return true
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+// Com a recusa automática desligada (padrão no modo só ligações) o toque expirado
+// só sai do painel: nenhum <reject> vai ao WhatsApp (o celular segue tocando), a
+// chamada é liberada e vira perdida no histórico. Ligada, o <reject> sai.
+func TestRingTimeoutWithoutReject(t *testing.T) {
+	prev := autoReject
+	t.Cleanup(func() { autoReject = prev })
+
+	autoReject = false
+	s, b, sock := ringingSession(t)
+	s.expireRingingCall("c1")
+	if waitTags(sock, "reject") || waitTags(sock, "terminate") {
+		t.Fatalf("sem recusa automática, mas enviou %v", sock.sent())
 	}
 	if _, ok := s.reg.get("c1"); ok {
 		t.Fatal("chamada continuou no registro")
@@ -81,10 +152,11 @@ func TestRingTimeoutWithoutReject(t *testing.T) {
 		t.Fatalf("histórico = %+v", rows)
 	}
 
-	ringTimeoutReject = true
-	s, _ = newSess()
-	if !panics(func() { s.expireRingingCall("c1") }) {
-		t.Fatal("com reject ligado deveria recusar no WhatsApp (teste vazio)")
+	autoReject = true
+	s, _, sock = ringingSession(t)
+	s.expireRingingCall("c1")
+	if !waitTags(sock, "reject") {
+		t.Fatalf("com recusa automática deveria enviar <reject>; enviou %v", sock.sent())
 	}
 }
 

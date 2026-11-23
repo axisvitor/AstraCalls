@@ -321,3 +321,18 @@ func (m *CallManager) ownCredJid() string {
 type CallError struct{ Msg string }
 
 func (e *CallError) Error() string { return e.Msg }
+
+// DropLocal encerra a chamada só deste lado, SEM enviar nada ao WhatsApp: marca
+// como encerrada e libera mídia/codec. Usado quando o toque expira e a recusa
+// automática está desligada — os outros aparelhos do número seguem tocando.
+func (m *CallManager) DropLocal(reason core.EndCallReason) {
+	m.mu.Lock()
+	call := m.currentCall
+	if call == nil || call.IsEnded() {
+		m.mu.Unlock()
+		return
+	}
+	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
+	m.mu.Unlock()
+	m.cleanupMedia()
+}
