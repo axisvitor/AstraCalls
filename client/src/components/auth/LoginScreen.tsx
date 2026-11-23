@@ -3,14 +3,14 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { agentLogin, checkAuth, setAuth } from "@/lib/auth";
+import { agentLogin, checkAuth, defaultBaseUrl, setAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 type Mode = "agent" | "admin";
 
 export const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
   const [mode, setMode] = useState<Mode>("agent");
-  const [url, setUrl] = useState(window.location.origin);
+  const [url, setUrl] = useState(defaultBaseUrl);
   const [user, setUser] = useState("");
   const [secret, setSecret] = useState(""); // senha (atendente) ou API key (admin)
   const [busy, setBusy] = useState(false);
@@ -47,7 +47,7 @@ export const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
       <div className="w-full max-w-sm space-y-5 rounded-2xl border bg-card p-7 shadow-soft">
         <div className="flex flex-col items-center gap-2 text-center">
           <span className="inline-flex dark:rounded-xl dark:bg-white dark:px-3 dark:py-2">
-            <img src="/logoCalls.png" alt="AstraCalls" className="h-9 w-auto select-none" draggable={false} />
+            <img src="logoCalls.png" alt="AstraCalls" className="h-9 w-auto select-none" draggable={false} />
           </span>
         </div>
         <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="tablist" aria-label="Tipo de acesso">

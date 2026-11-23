@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiGet, apiPut } from "@/lib/api";
 import { useSessions } from "@/stores/sessions";
+import { defaultBaseUrl } from "@/lib/auth";
 import { phoneFromJid } from "@/utils/format";
 
 type EmbedConfig = { inboxes: Record<string, string>; phoneAttrs: string[] };
@@ -61,7 +62,7 @@ export const EmbedDialog = () => {
           <DialogTitle>Aba Ligações no Chatwoot</DialogTitle>
           <DialogDescription>
             No Chatwoot, em Configurações → Integrações → Aplicativos do Painel, crie um aplicativo com a URL{" "}
-            <code className="rounded bg-muted px-1">{window.location.origin}/embed/chatwoot</code>. Aqui você diz por qual
+            <code className="rounded bg-muted px-1">{defaultBaseUrl()}/embed/chatwoot</code>. Aqui você diz por qual
             linha cada caixa de entrada liga.
           </DialogDescription>
         </DialogHeader>

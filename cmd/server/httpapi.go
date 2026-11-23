@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -483,27 +484,44 @@ func (s *server) staticFileHandler() http.Handler {
 		case "/", "/index.html", "/embed/chatwoot":
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 			embed := r.URL.Path == "/embed/chatwoot"
-			if defaultTransport != "" || embed {
-				if b, err := os.ReadFile(filepath.Join(s.staticDir, "index.html")); err == nil {
-					inject := ""
-					if defaultTransport != "" {
-						inject += "<script>window.__WACALLS_DEFAULT_TRANSPORT=" + strconv.Quote(defaultTransport) + ";</script>"
-					}
-					if embed {
-						origins, _ := json.Marshal(embedOrigins())
-						inject += "<script>window.__WACALLS_EMBED_ORIGINS=" + string(origins) + ";</script>"
-					}
-					html := strings.Replace(string(b), "</head>", inject+"</head>", 1)
-					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-					_, _ = w.Write([]byte(html))
-					return
+			if b, err := os.ReadFile(filepath.Join(s.staticDir, "index.html")); err == nil {
+				// painel servido sob um caminho de outro domínio (ex.: /astracalls no
+				// domínio do Chatwoot, com o proxy mandando X-Forwarded-Prefix): os
+				// arquivos são relativos ao <base> (que tem de vir antes deles) e a API
+				// usa o mesmo prefixo.
+				prefix := forwardedPrefix(r)
+				head := `<base href="` + prefix + `/">`
+				inject := "<script>window.__WACALLS_BASE=" + strconv.Quote(prefix) + ";</script>"
+				if defaultTransport != "" {
+					inject += "<script>window.__WACALLS_DEFAULT_TRANSPORT=" + strconv.Quote(defaultTransport) + ";</script>"
 				}
+				if embed {
+					origins, _ := json.Marshal(embedOrigins())
+					inject += "<script>window.__WACALLS_EMBED_ORIGINS=" + string(origins) + ";</script>"
+				}
+				html := strings.Replace(string(b), "<head>", "<head>"+head, 1)
+				html = strings.Replace(html, "</head>", inject+"</head>", 1)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = w.Write([]byte(html))
+				return
 			}
 		case "/widget.js":
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		}
 		fs.ServeHTTP(w, r)
 	})
+}
+
+var prefixRe = regexp.MustCompile(`^(/[A-Za-z0-9_-]+)+$`)
+
+// forwardedPrefix lê o X-Forwarded-Prefix do proxy (ex.: "/astracalls"). Só aceita
+// um caminho simples (letras, números, - e _), senão "" — ele vai para o HTML.
+func forwardedPrefix(r *http.Request) string {
+	p := strings.TrimRight(strings.TrimSpace(r.Header.Get("X-Forwarded-Prefix")), "/")
+	if !prefixRe.MatchString(p) {
+		return ""
+	}
+	return p
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

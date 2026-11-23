@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { CallCard } from "@/components/domain/call/CallCard";
 import { MicPermissionBanner } from "@/components/domain/call/MicPermissionBanner";
 import { apiGet } from "@/lib/api";
+import { defaultBaseUrl } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { FETCH_INFO, contactFromContext, parseAppContextMessage, samePhone, type EmbedContact } from "@/lib/chatwoot-context";
 import { useHistory } from "@/hooks/useHistory";
@@ -48,7 +49,7 @@ const PANEL_WINDOW = "astracalls-painel";
 
 /** Abre (ou foca) a aba do painel completo com sessão e número preenchidos. */
 const openPanel = (sid: string, phone: string) => {
-  const url = `${window.location.origin}/#dial=${encodeURIComponent(phone)}&sid=${encodeURIComponent(sid)}`;
+  const url = `${defaultBaseUrl()}/#dial=${encodeURIComponent(phone)}&sid=${encodeURIComponent(sid)}`;
   const w = window.open(url, PANEL_WINDOW);
   w?.focus();
   return !!w;
@@ -196,7 +197,7 @@ export const EmbedChatwoot = () => {
         {blocked && (
           <p className="text-destructive">
             O navegador bloqueou a abertura da aba. Permita pop-ups para o Chatwoot ou abra{" "}
-            <a className="underline" href={window.location.origin} target={PANEL_WINDOW} rel="noopener">
+            <a className="underline" href={defaultBaseUrl() + "/"} target={PANEL_WINDOW} rel="noopener">
               o painel
             </a>
             .

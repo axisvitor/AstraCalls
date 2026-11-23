@@ -3,7 +3,13 @@ import { setAuthInfo, type AuthInfo } from "@/stores/auth";
 const URL_KEY = "wacalls.apiUrl";
 const KEY_KEY = "wacalls.apiKey";
 
-export const getApiBase = (): string => (localStorage.getItem(URL_KEY) || "").replace(/\/+$/, "");
+/** Prefixo de caminho do painel atrás do proxy (ex.: "/astracalls"); injetado pelo servidor. */
+export const basePath = (): string => (window as unknown as { __WACALLS_BASE?: string }).__WACALLS_BASE ?? "";
+
+/** URL do painel/API: a salva no login, ou esta origem com o prefixo. */
+export const defaultBaseUrl = (): string => window.location.origin + basePath();
+
+export const getApiBase = (): string => (localStorage.getItem(URL_KEY) || defaultBaseUrl()).replace(/\/+$/, "");
 export const getApiKey = (): string => localStorage.getItem(KEY_KEY) || "";
 export const isAuthed = (): boolean => !!getApiKey();
 

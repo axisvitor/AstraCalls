@@ -75,3 +75,24 @@ func TestEmbedAgentRoutes(t *testing.T) {
 		t.Fatal("atendente não grava config nem usa sessão alheia")
 	}
 }
+
+// Painel sob um caminho do domínio do Chatwoot (modo mesma origem): o proxy manda
+// X-Forwarded-Prefix e o HTML ganha <base> com ele; lixo no cabeçalho é ignorado.
+func TestForwardedPrefixBase(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "index.html"), []byte(`<html><head><script src="./assets/a.js"></script></head></html>`), 0o644)
+	h := (&server{staticDir: dir}).staticFileHandler()
+	for prefix, want := range map[string]string{
+		"/astracalls":          `<head><base href="/astracalls/"><script src="./assets/a.js">`,
+		"":                     `<head><base href="/"><script src="./assets/a.js">`,
+		`/x"><script>alert(1)`: `<head><base href="/"><script src="./assets/a.js">`,
+	} {
+		req := httptest.NewRequest("GET", "/embed/chatwoot", nil)
+		req.Header.Set("X-Forwarded-Prefix", prefix)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("prefixo %q: %s", prefix, rec.Body.String())
+		}
+	}
+}

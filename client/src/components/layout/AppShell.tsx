@@ -43,7 +43,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
                 </SheetContent>
               </Sheet>
               <span className="inline-flex md:hidden dark:rounded-lg dark:bg-white dark:px-1.5 dark:py-1">
-                <img src="/logoCalls.png" alt="AstraCalls" className="h-6 w-auto select-none" draggable={false} />
+                <img src="logoCalls.png" alt="AstraCalls" className="h-6 w-auto select-none" draggable={false} />
               </span>
               <h1 className="hidden truncate text-2xl font-bold tracking-tight text-foreground md:block">
                 Chamadas
@@ -65,7 +65,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
               {!lean && (
               <Button variant="outline" size="icon" className="rounded-full" asChild>
                 <a
-                  href="/api-docs.html"
+                  href="api-docs.html"
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="Documentação da API"
