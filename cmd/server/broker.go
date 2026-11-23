@@ -641,6 +641,19 @@ func (b *Broker) emitIncomingClaimed(sessionID, id, owner string) {
 	b.broadcastForSession(sessionID, map[string]any{"type": "incoming-claimed", "sessionId": sessionID, "id": id, "owner": owner})
 }
 
+// historyCall acha uma chamada encerrada pelo id (nil se não estiver no histórico).
+func (b *Broker) historyCall(id string) (*CallRecord, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for i := len(b.history) - 1; i >= 0; i-- {
+		if b.history[i].CallID == id {
+			cp := b.history[i]
+			return &cp, true
+		}
+	}
+	return nil, false
+}
+
 func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

@@ -14,8 +14,8 @@ import (
 )
 
 // Entrega da gravação: ao fim da chamada o MP3 mixado é (1) servido em
-// GET /recordings/{id} (rota pública — o id/callID é não-enumerável e funciona
-// como capability), (2) anexado no Chatwoot como NOTA PRIVADA na conversa do
+// GET /recordings/{id} (exige a chave-mestra ou o token do atendente dono da
+// chamada; o nome do arquivo tem parte aleatória), (2) anexado no Chatwoot como NOTA PRIVADA na conversa do
 // número ligado (fica interno pros agentes, nunca vai pro cliente) e (3)
 // anunciado no webhook da sessão como evento "recording". Ligar/desligar é
 // por sessão (Session.recording).
@@ -87,10 +87,38 @@ func fmtDuration(seconds int) string {
 
 // handleRecording serve um MP3 finalizado. Rota pública (fora de /api/, sem API
 // key) — o id é não-enumerável e funciona como capability.
+// recordingFileName: "<callId>-<32 hex aleatórios>.mp3". Saber o callId (que todo
+// atendente da linha vê no SSE e no histórico) não dá o nome do arquivo.
+func recordingFileName(callID string) string {
+	return callID + "-" + generateRandomString(32) + ".mp3"
+}
+
+// recordingAllowed: chave-mestra (ou API sem chave configurada, como o resto da
+// API) ou o atendente dono da chamada da gravação.
+func (s *server) recordingAllowed(r *http.Request, file string) bool {
+	master := os.Getenv("WACALLS_API_KEY")
+	got := requestAPIKey(r)
+	if master == "" || got == master {
+		return true
+	}
+	a, ok := s.agents.fromToken(got)
+	if !ok {
+		return false
+	}
+	// o sufixo aleatório não tem hífen; o callId pode ter (ex.: "sip-…")
+	callID := file[:max(strings.LastIndex(file, "-"), 0)]
+	rec, ok := s.broker.historyCall(callID)
+	return ok && rec.Owner != nil && *rec.Owner == agentOwnerPrefix+a.ID
+}
+
 func (s *server) handleRecording(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !safeRecordingID(id) {
 		http.NotFound(w, r)
+		return
+	}
+	if !s.recordingAllowed(r, id) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 	full := filepath.Join(recordingDir(), filepath.Base(id))

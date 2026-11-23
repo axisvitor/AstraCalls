@@ -297,7 +297,8 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 > **Gravação de chamada (opt-in por sessão).** Ligue em `PUT /api/sessions/{sid}/recording {"enabled":true}`
 > (ou pelo toggle "Gravar" no painel). O áudio dos dois lados é mixado num MP3 mono 16 kHz
 > que vira **nota privada** no Chatwoot e evento `recording` no webhook; o arquivo fica em
-> `GET /recordings/{callId}.mp3`. Requer `ffmpeg` (já na imagem).
+> `GET /recordings/{arquivo}` (a URL vem no evento; exige a chave-mestra ou o token do
+> atendente dono da chamada). Requer `ffmpeg` (já na imagem).
 
 ---
 

@@ -790,7 +790,7 @@ paths:
         Quando ligado, TODAS as chamadas desta conta são gravadas. No fim de cada
         chamada o MP3 vira uma **nota privada** na conversa do número no Chatwoot
         (se configurado) e um evento `recording` é enviado no webhook da sessão.
-        O áudio também fica em `GET /recordings/{callId}.mp3`.
+        O áudio também fica em `GET /recordings/{arquivo}` (URL no evento; exige a chave-mestra).
       parameters:
         - { $ref: "#/components/parameters/Sid" }
       requestBody:
@@ -941,15 +941,19 @@ paths:
   /recordings/{id}:
     get:
       tags: [Sessões]
-      summary: Baixa o MP3 de uma gravação (rota pública / capability)
-      description: "Fora de /api/ (sem API key). O id (callId) é não-enumerável e atua como capability."
+      summary: Baixa o MP3 de uma gravação
+      description: >-
+        Exige a chave-mestra (X-API-Key ou ?apiKey=) ou o token do atendente dono da
+        chamada. O nome do arquivo é "<callId>-<aleatório>.mp3" e vem no evento
+        `recording` do webhook (campo url); não dá para montá-lo só com o callId.
       parameters:
-        - { name: id, in: path, required: true, schema: { type: string }, example: "abc123.mp3" }
+        - { name: id, in: path, required: true, schema: { type: string }, example: "abc123-4f1c….mp3" }
       responses:
         "200":
           description: Áudio MP3
           content:
             audio/mpeg: { schema: { type: string, format: binary } }
+        "401": { description: Sem chave-mestra nem token do atendente dono }
         "404": { description: Não encontrado }
 
   /api/sessions/{sid}:

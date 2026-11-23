@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"log/slog"
 	"math"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -180,5 +185,60 @@ func TestRecordingPublicURL(t *testing.T) {
 	t.Setenv("WACALLS_PUBLIC_BASE_URL", "")
 	if recordingPublicURL("/tmp/x.mp3") != "" {
 		t.Fatal("expected empty URL when base not configured")
+	}
+}
+
+// O nome do arquivo não sai do callId: tem parte aleatória.
+func TestRecordingFileNameNotDerivable(t *testing.T) {
+	a, b := recordingFileName("CALL1"), recordingFileName("CALL1")
+	if a == b || a == "CALL1.mp3" || !safeRecordingID(a) || !strings.HasPrefix(a, "CALL1-") {
+		t.Fatalf("nomes = %q, %q", a, b)
+	}
+}
+
+// GET /recordings exige chave-mestra ou o atendente dono da chamada; sem nada,
+// ou atendente de outra chamada, não baixa (antes a rota era pública).
+func TestRecordingRequiresAuth(t *testing.T) {
+	d, _ := newTestAgents(t) // WACALLS_API_KEY=mestra
+	dir := t.TempDir()
+	t.Setenv("WACALLS_RECORDING_DIR", dir)
+	maria := loginToken(t, d)
+	ma, _ := d.fromToken(maria)
+	bob, _ := d.create(context.Background(), "bob", "Bob", "senha-forte-2", []string{"s1"})
+	bobTok, _ := d.issue(&bob)
+	b := NewBroker()
+	owner := agentOwnerPrefix + ma.ID
+	b.upsertCall(CallRecord{SessionID: "s1", CallID: "C1", Owner: &owner, Direction: "inbound", Status: StatusConnected})
+	b.endCall("C1", "user_ended")
+	file := recordingFileName("C1")
+	_ = os.WriteFile(filepath.Join(dir, file), []byte("ID3"), 0o644)
+	srv := &server{agents: d, broker: b}
+	get := func(key string) int {
+		r := httptest.NewRequest("GET", "/recordings/"+file, nil)
+		r.SetPathValue("id", file)
+		if key != "" {
+			r.Header.Set("X-API-Key", key)
+		}
+		rec := httptest.NewRecorder()
+		srv.handleRecording(rec, r)
+		return rec.Code
+	}
+	// callId com hífen (chamadas SIP são "sip-…"): o dono ainda é achado
+	sipFile := recordingFileName("sip-ab12")
+	_ = os.WriteFile(filepath.Join(dir, sipFile), []byte("ID3"), 0o644)
+	b.upsertCall(CallRecord{SessionID: "s1", CallID: "sip-ab12", Owner: &owner, Direction: "inbound", Status: StatusConnected})
+	b.endCall("sip-ab12", "user_ended")
+	r := httptest.NewRequest("GET", "/recordings/"+sipFile, nil)
+	r.SetPathValue("id", sipFile)
+	r.Header.Set("X-API-Key", maria)
+	rec := httptest.NewRecorder()
+	srv.handleRecording(rec, r)
+	if rec.Code != 200 {
+		t.Fatalf("dono de chamada sip-… = %d", rec.Code)
+	}
+	for key, want := range map[string]int{"": 401, "errada": 401, bobTok: 401, "mestra": 200, maria: 200} {
+		if got := get(key); got != want {
+			t.Errorf("chave %.10q = %d, quer %d", key, got, want)
+		}
 	}
 }
