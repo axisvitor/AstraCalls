@@ -345,6 +345,15 @@ func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid strin
 		if guarded {
 			got := requestAPIKey(r)
 			if got == key {
+				// Painel servido sob um caminho do domínio do Chatwoot (mesma origem):
+				// a chave ficaria no armazenamento daquela origem, legível por qualquer
+				// script do Chatwoot. Ali só entra atendente.
+				if servedUnderChatwoot(r) {
+					writeJSON(w, http.StatusForbidden, map[string]string{
+						"error": "a chave-mestra não é aceita no painel servido sob o domínio do Chatwoot; entre como administrador pelo domínio próprio do AstraCalls",
+					})
+					return
+				}
 				h.ServeHTTP(w, r) // chave-mestra: libera tudo
 				return
 			}

@@ -213,6 +213,13 @@ chat.sualoja.com.br {
 }
 ```
 
+**Nesse endereço só entra atendente.** O servidor recusa a chave-mestra quando o
+pedido chega pelo caminho do Chatwoot (com `X-Forwarded-Prefix` e o host de um
+Chatwoot listado em `WACALLS_EMBED_ORIGINS`): a chave ficaria
+guardada no navegador sob o domínio do Chatwoot, ao alcance de qualquer script dele.
+O administrador continua entrando pelo domínio próprio
+(`https://ligacoes.sualoja.com.br`).
+
 Use `WACALLS_EMBED_ORIGINS=https://chat.sualoja.com.br` e, no Chatwoot, a URL
 `https://chat.sualoja.com.br/astracalls/embed/chatwoot`. O painel completo fica em
 `https://chat.sualoja.com.br/astracalls/`.

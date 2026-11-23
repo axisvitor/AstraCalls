@@ -42,3 +42,37 @@ func TestWidgetCallsSegment(t *testing.T) {
 		t.Fatal("widget perdeu as rotas de chamada")
 	}
 }
+
+// Sob o prefixo do proxy (mesma origem com o Chatwoot) a chave-mestra é recusada;
+// pelo domínio próprio, segue valendo. Atendente entra nos dois.
+func TestMasterKeyRefusedUnderPrefix(t *testing.T) {
+	d, _ := newTestAgents(t)
+	t.Setenv("WACALLS_EMBED_ORIGINS", "https://chat.loja.com.br")
+	tok := loginToken(t, d)
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := withAuth(ok, "mestra", "", nil, d.fromToken)
+	do := func(key, host, prefix string) int {
+		r := httptest.NewRequest("GET", "/api/config", nil)
+		r.Host = host
+		r.Header.Set("X-API-Key", key)
+		if prefix != "" {
+			r.Header.Set("X-Forwarded-Prefix", prefix)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := do("mestra", "chat.loja.com.br", "/astracalls"); c != http.StatusForbidden {
+		t.Fatalf("chave-mestra sob o domínio do Chatwoot = %d", c)
+	}
+	if c := do("mestra", "ligacoes.loja.com.br", ""); c != http.StatusOK {
+		t.Fatalf("chave-mestra no domínio próprio = %d", c)
+	}
+	// StripPrefix (Traefik) no domínio próprio também manda X-Forwarded-Prefix
+	if c := do("mestra", "ligacoes.loja.com.br", "/calls"); c != http.StatusOK {
+		t.Fatalf("chave-mestra com StripPrefix no domínio próprio = %d", c)
+	}
+	if c := do(tok, "chat.loja.com.br", "/astracalls"); c != http.StatusOK {
+		t.Fatalf("atendente sob prefixo = %d", c)
+	}
+}
