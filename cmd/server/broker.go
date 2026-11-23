@@ -28,6 +28,7 @@ type CallRecord struct {
 	EndedAt   *int64     `json:"endedAt,omitempty"`
 	EndReason string     `json:"endReason,omitempty"`
 	Source    string     `json:"source,omitempty"` // "sip" no modo agente; vazio = WhatsApp
+	Agent     string     `json:"agent,omitempty"`  // nome do atendente que atendeu/ligou (histórico)
 }
 
 type AuthSnapshot struct {
@@ -63,8 +64,16 @@ type SessionInfo struct {
 	SIPExtInboundMode string `json:"sip_ext_inbound_mode"`
 }
 
+// forAgent tira da sessão o que só o administrador usa (credenciais SIP).
+func (si SessionInfo) forAgent() SessionInfo {
+	return SessionInfo{ID: si.ID, Name: si.Name, JID: si.JID, LastJID: si.LastJID, State: si.State, Paired: si.Paired}
+}
+
 type subscriber struct {
 	clientID string
+	// sessions restringe um ATENDENTE às sessões liberadas para ele (nil = sem
+	// restrição). Atendente também não recebe QR/código de pareamento.
+	sessions map[string]bool
 	// accountID é a conta do Chatwoot que este assinante representa. 0 = sem
 	// escopo (painel admin) e recebe TODOS os eventos; > 0 (widget de uma conta)
 	// recebe só os eventos de chamada das sessões daquela conta.
@@ -81,6 +90,9 @@ type subscriber struct {
 
 // wants diz se o assinante deve receber um evento da sessão com esse escopo.
 func (s *subscriber) wants(sc sessionScope) bool {
+	if s.sessions != nil && !s.sessions[sc.sid] {
+		return false
+	}
 	if s.accountID == 0 {
 		return true // painel admin
 	}
@@ -95,6 +107,7 @@ func (s *subscriber) wants(sc sessionScope) bool {
 
 // sessionScope é a conta/host/caixa do Chatwoot ligada a uma sessão.
 type sessionScope struct {
+	sid   string
 	acct  int
 	host  string
 	inbox int
@@ -105,6 +118,9 @@ type Broker struct {
 	subs    map[*subscriber]struct{}
 	calls   map[string]*CallRecord
 	history []CallRecord
+	// labels: clientId -> nome do atendente, para o histórico mostrar quem
+	// atendeu/ligou (o dono da chamada é o clientId do navegador).
+	labels map[string]string
 
 	// SessionsFn lista as sessões para o retrato inicial do SSE (filtrado por escopo).
 	SessionsFn func() []SessionInfo
@@ -118,6 +134,7 @@ type Broker struct {
 }
 
 func (b *Broker) scopeOf(sessionID string) (sc sessionScope) {
+	sc.sid = sessionID
 	if b.AccountForSession != nil {
 		sc.acct = b.AccountForSession(sessionID)
 	}
@@ -132,8 +149,9 @@ func (b *Broker) scopeOf(sessionID string) (sc sessionScope) {
 
 func NewBroker() *Broker {
 	return &Broker{
-		subs:  map[*subscriber]struct{}{},
-		calls: map[string]*CallRecord{},
+		subs:   map[*subscriber]struct{}{},
+		calls:  map[string]*CallRecord{},
+		labels: map[string]string{},
 	}
 }
 
@@ -146,7 +164,11 @@ func (b *Broker) subscribeScoped(clientID string, accountID int, cwHost string) 
 }
 
 func (b *Broker) subscribeInboxes(clientID string, accountID int, cwHost string, inboxes map[int]bool) *subscriber {
-	s := &subscriber{clientID: clientID, accountID: accountID, cwHost: cwHost, inboxes: inboxes, ch: make(chan []byte, 32)}
+	return b.subscribeFiltered(clientID, accountID, cwHost, inboxes, nil)
+}
+
+func (b *Broker) subscribeFiltered(clientID string, accountID int, cwHost string, inboxes map[int]bool, sessions map[string]bool) *subscriber {
+	s := &subscriber{clientID: clientID, accountID: accountID, cwHost: cwHost, inboxes: inboxes, sessions: sessions, ch: make(chan []byte, 32)}
 	b.mu.Lock()
 	b.subs[s] = struct{}{}
 	b.mu.Unlock()
@@ -260,7 +282,52 @@ func (b *Broker) emitAuthState(sessionID string, a AuthSnapshot) {
 	if len(a.Passkey) > 0 {
 		ev["passkey"] = a.Passkey // desafio WebAuthn p/ contas com passkey
 	}
-	b.broadcastForSession(sessionID, ev) // painel + widget/integração da conta dona
+	// painel + widget/integração da conta dona; atendente só vê o estado.
+	b.broadcastForSessionSplit(sessionID, ev, map[string]any{
+		"type": "auth-state", "sessionId": sessionID, "paired": a.Paired, "state": a.State,
+	})
+}
+
+// broadcastForSessionSplit é o broadcastForSession com um evento alternativo para
+// assinantes ATENDENTE (agentEv nil = atendente não recebe).
+func (b *Broker) broadcastForSessionSplit(sessionID string, ev, agentEv any) {
+	full, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	var lite []byte
+	if agentEv != nil {
+		lite, _ = json.Marshal(agentEv)
+	}
+	sc := b.scopeOf(sessionID)
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for s := range b.subs {
+		if !s.wants(sc) {
+			continue
+		}
+		data := full
+		if s.sessions != nil {
+			if lite == nil {
+				continue
+			}
+			data = lite
+		}
+		select {
+		case s.ch <- data:
+		default:
+		}
+	}
+}
+
+// setClientLabel associa um clientId (navegador) ao nome do atendente.
+func (b *Broker) setClientLabel(clientID, name string) {
+	if clientID == "" {
+		return
+	}
+	b.mu.Lock()
+	b.labels[clientID] = name
+	b.mu.Unlock()
 }
 
 // emitSessionList manda a cada assinante só as sessões do escopo dele (o painel
@@ -292,12 +359,15 @@ func (b *Broker) sessionScopes(sessions []SessionInfo) map[string]sessionScope {
 }
 
 func sessionListFor(s *subscriber, sessions []SessionInfo, scopes map[string]sessionScope) map[string]any {
-	if s.accountID == 0 {
+	if s.accountID == 0 && s.sessions == nil {
 		return map[string]any{"type": "session-list", "sessions": sessions}
 	}
 	out := make([]SessionInfo, 0, len(sessions))
 	for _, si := range sessions {
 		if s.wants(scopes[si.ID]) {
+			if s.sessions != nil {
+				si = si.forAgent()
+			}
 			out = append(out, si)
 		}
 	}
@@ -307,7 +377,7 @@ func sessionListFor(s *subscriber, sessions []SessionInfo, scopes map[string]ses
 // QR/pareamento: painel admin e a conta dona da sessão (o AstraChat pareia por
 // ela); nunca widgets de outras contas, que poderiam parear o número.
 func (b *Broker) emitSessionQR(sessionID, qr string) {
-	b.broadcastForSession(sessionID, map[string]any{"type": "session-qr", "sessionId": sessionID, "qr": qr})
+	b.broadcastForSessionSplit(sessionID, map[string]any{"type": "session-qr", "sessionId": sessionID, "qr": qr}, nil)
 }
 
 func (b *Broker) upsertCall(r CallRecord) {
@@ -393,6 +463,9 @@ func (b *Broker) endCall(id, reason string) {
 	c.Status = StatusEnded
 	c.EndedAt = &now
 	c.EndReason = reason
+	if c.Owner != nil {
+		c.Agent = b.labels[*c.Owner]
+	}
 	ended := *c
 	delete(b.calls, id)
 	b.history = append(b.history, ended)
@@ -537,7 +610,7 @@ func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
 	return rows
 }
 
-func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string, accountID int, cwHost string, inboxes map[int]bool) {
+func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string, accountID int, cwHost string, inboxes map[int]bool, onlySessions map[string]bool) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -548,7 +621,7 @@ func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID strin
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	sub := b.subscribeInboxes(clientID, accountID, cwHost, inboxes)
+	sub := b.subscribeFiltered(clientID, accountID, cwHost, inboxes, onlySessions)
 	defer b.unsubscribe(sub)
 
 	if b.SessionsFn != nil {

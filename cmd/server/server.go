@@ -16,7 +16,8 @@ type server struct {
 	log       *slog.Logger
 	staticDir string
 	sipGW     *SIPGateway
-	apiMux    *http.ServeMux // usado pelo MCP para despachar as ferramentas em processo
+	agents    *agentDirectory // atendentes (usuário/senha) — ver agents.go
+	apiMux    *http.ServeMux  // usado pelo MCP para despachar as ferramentas em processo
 }
 
 // newServer monta o provedor de banco (Postgres, 1 banco por sessão no estilo
@@ -41,6 +42,11 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 		return nil, err
 	}
 
+	agents, err := newAgentDirectory(ctx, mainDB)
+	if err != nil {
+		return nil, err
+	}
+
 	broker := NewBroker()
 	mgr := newSessionManager(ctx, provider, broker, store, waLogger, log, maxCalls)
 	broker.SessionsFn = mgr.infos
@@ -49,10 +55,11 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	broker.InboxForSession = mgr.inboxIDForSession
 
 	// Gateway SIP: o PBX/softphone do cliente se registra aqui (modelo Wavoip).
+	srv := &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir, agents: agents}
 	sipAddr, sipOn := sipListenAddr()
 	if !sipOn {
 		log.Info("SIP desativado (WACALLS_SIP_ADDR=off ou modo só ligações): porta SIP não aberta")
-		return &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir}, nil
+		return srv, nil
 	}
 	sipGateway, err := NewSIPGateway(mgr, log)
 	if err != nil {
@@ -63,9 +70,9 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 		mgr.sipExtApply = sipGateway.applyExtRegistration
 		mgr.sipExtRemove = sipGateway.removeExtRegistration
 		_ = sipGateway.Start(ctx, sipAddr)
+		srv.sipGW = sipGateway
 	}
-
-	return &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir, sipGW: sipGateway}, nil
+	return srv, nil
 }
 
 // sipListenAddr devolve onde o gateway SIP escuta e se ele deve subir. Endereço por

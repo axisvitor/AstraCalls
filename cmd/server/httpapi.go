@@ -25,6 +25,12 @@ func (s *server) routes() http.Handler {
 	// = token efêmero escopado por conta (recomendado).
 	mux.HandleFunc("GET /api/widget-key", s.handleWidgetKey)
 	mux.HandleFunc("POST /api/widget-tokens", s.handleWidgetToken)
+	// Atendentes: login aberto; gestão só com a chave-mestra (ver agents.go).
+	mux.HandleFunc("POST /api/agent/login", s.handleAgentLogin)
+	mux.HandleFunc("GET /api/agents", s.handleListAgents)
+	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
+	mux.HandleFunc("PUT /api/agents/{id}", s.handleUpdateAgent)
+	mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
 	mux.HandleFunc("GET /api/sessions/{sid}/calls", s.handleSessionCalls)
@@ -284,7 +290,7 @@ func (s *server) routes() http.Handler {
 	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
 		handler = withAuth(handler, key, os.Getenv("WACALLS_WIDGET_KEY"), func(sid string) (int, int) {
 			return s.sessions.accountIDForSession(sid), s.sessions.inboxIDForSession(sid)
-		})
+		}, s.agents.fromToken)
 	}
 	return withCORS(handler)
 }
@@ -316,15 +322,28 @@ func withCORS(h http.Handler) http.Handler {
 //
 // sessionScope (opcional) devolve conta/caixa do Chatwoot de uma sessão: com ele, um
 // token de widget só opera chamadas das sessões da própria conta (e caixa, se fixada).
-func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid string) (acct, inbox int)) http.Handler {
+//
+// agentAuth (opcional) valida um token de ATENDENTE (agents.go): ele só acessa a
+// superfície de chamadas das sessões liberadas para ele (agentAllowed).
+func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid string) (acct, inbox int), agentAuth func(tok string) (*agent, bool)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook")
+		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook") && p != "/api/agent/login"
 		if guarded {
 			got := requestAPIKey(r)
 			if got == key {
 				h.ServeHTTP(w, r) // chave-mestra: libera tudo
 				return
+			}
+			if agentAuth != nil {
+				if a, ok := agentAuth(got); ok {
+					if !agentAllowed(r, a) {
+						writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+						return
+					}
+					h.ServeHTTP(w, withAgentCtx(r, a))
+					return
+				}
 			}
 			// Superfície de widget: chave estática (por instância) OU token efêmero (por conta).
 			if widgetAllowed(r) {
@@ -524,8 +543,17 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if acc != 0 {
 		inboxes = eventInboxes(r) // filtro por caixa só vale para widget de conta
 	}
+	var only map[string]bool // atendente: só as sessões liberadas para ele
+	if a := agentFrom(r); a != nil {
+		acc, host, inboxes = 0, "", nil
+		only = map[string]bool{}
+		for _, sid := range a.Sessions {
+			only[sid] = true
+		}
+		s.broker.setClientLabel(cid, a.Name) // nome no histórico de quem atendeu/ligou
+	}
 	s.log.Info("sse connect", "clientId", cid, "accountId", acc, "origin", r.Header.Get("Origin"), "cwHost", host, "inboxes", len(inboxes))
-	s.broker.serveSSE(w, r, cid, acc, host, inboxes)
+	s.broker.serveSSE(w, r, cid, acc, host, inboxes, only)
 	s.log.Info("sse disconnect", "clientId", cid, "accountId", acc)
 }
 
@@ -541,6 +569,13 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"commit":  commit,
 		// Chamada em grupo (experimental) habilitada nesta instância.
 		"groupCalls": groupCallsEnabled(),
+		// Modo só ligações (WACALLS_CALLS_ONLY): o painel esconde o que não é chamada.
+		"callsOnly": callsOnly,
+		"role":      "admin",
+	}
+	if a := agentFrom(r); a != nil {
+		cfg["role"], cfg["agent"] = "agent", a
+		cfg["groupCalls"] = false
 	}
 	// IP público anunciado no WebRTC/SIP e de onde veio (env, interface, stun:…,
 	// http:…) — diagnóstico do WACALLS_PUBLIC_IP=auto.
@@ -551,7 +586,22 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSessionList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": s.sessions.infos()})
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessionsForAgent(agentFrom(r), s.sessions.infos())})
+}
+
+// sessionsForAgent filtra a lista para um atendente (nil = admin vê tudo), sem os
+// dados de pareamento (QR/código), que só o administrador usa.
+func sessionsForAgent(a *agent, all []SessionInfo) []SessionInfo {
+	if a == nil {
+		return all
+	}
+	out := make([]SessionInfo, 0, len(all))
+	for _, si := range all {
+		if a.canSession(si.ID) {
+			out = append(out, si.forAgent())
+		}
+	}
+	return out
 }
 
 func (s *server) handleSessionCalls(w http.ResponseWriter, r *http.Request) {
