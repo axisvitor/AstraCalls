@@ -102,8 +102,13 @@ func TestCallsOnlyNoReadReceipt(t *testing.T) {
 	if panics(func() { s.maybeMarkRead(context.Background(), evt) }) {
 		t.Fatal("modo só ligações tentou marcar como lida")
 	}
-	if s.getChatwoot().valid() || s.getChatwoot().ReadMessages {
+	if s.getChatwoot().valid() || s.getChatwoot().ReadMessages || s.shouldMarkRead(evt) {
 		t.Fatal("config do Chatwoot deveria ser ignorada em modo só ligações")
+	}
+	// controle: fora do modo, com read_messages ligado, o recibo sairia
+	callsOnly = false
+	if !s.shouldMarkRead(evt) {
+		t.Fatal("modo normal com read_messages deveria marcar como lida (teste vazio)")
 	}
 }
 

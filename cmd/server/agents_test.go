@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -316,5 +317,21 @@ func TestAgentFailsPrune(t *testing.T) {
 	d.pruneFails(now)
 	if len(d.fails) != 1 || d.fails["maria"] == nil {
 		t.Fatalf("depois de podar: %d entradas", len(d.fails))
+	}
+}
+
+// Update e remove concorrentes não ressuscitam o atendente apagado.
+func TestAgentUpdateRemoveNoResurrect(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		d, a := newTestAgents(t)
+		pw := "outra-senha-" + strconv.Itoa(i)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = d.update(context.Background(), a.ID, nil, &pw, nil) }()
+		go func() { defer wg.Done(); time.Sleep(time.Millisecond); _ = d.remove(context.Background(), a.ID) }()
+		wg.Wait()
+		if _, ok := d.get(a.ID); ok {
+			t.Fatalf("rodada %d: atendente apagado voltou", i)
+		}
 	}
 }

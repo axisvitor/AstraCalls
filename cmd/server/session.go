@@ -802,11 +802,7 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 // maybeMarkRead confirma leitura automática das mensagens recebidas quando
 // read_messages está ligado na config do Chatwoot (paridade com a Evolution).
 func (s *Session) maybeMarkRead(ctx context.Context, evt *events.Message) {
-	if callsOnly || !s.getChatwoot().ReadMessages || evt.Info.IsFromMe {
-		return
-	}
-	// não faz sentido/formato p/ newsletters e status/broadcast
-	if evt.Info.Chat.Server == types.NewsletterServer || evt.Info.Chat.Server == types.BroadcastServer {
+	if !s.shouldMarkRead(evt) {
 		return
 	}
 	go func() {
@@ -815,6 +811,15 @@ func (s *Session) maybeMarkRead(ctx context.Context, evt *events.Message) {
 			s.log.Debug("read_messages: mark read failed", "err", err)
 		}
 	}()
+}
+
+// shouldMarkRead decide se a mensagem recebida ganha recibo de leitura.
+func (s *Session) shouldMarkRead(evt *events.Message) bool {
+	if callsOnly || !s.getChatwoot().ReadMessages || evt.Info.IsFromMe {
+		return false
+	}
+	// não faz sentido/formato p/ newsletters e status/broadcast
+	return evt.Info.Chat.Server != types.NewsletterServer && evt.Info.Chat.Server != types.BroadcastServer
 }
 
 func (s *Session) handleEvent(rawEvt any) {

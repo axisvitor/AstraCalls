@@ -209,24 +209,27 @@ func (d *agentDirectory) create(ctx context.Context, username, name, password st
 
 // update altera nome, senha e/ou sessões (nil = mantém).
 func (d *agentDirectory) update(ctx context.Context, id string, name, password *string, sessions *[]string) (agent, error) {
-	d.mu.RLock()
-	cur, ok := d.byID[id]
-	var next agent
-	if ok {
-		next = *cur
-	}
-	d.mu.RUnlock()
-	if !ok {
-		return agent{}, errAgentNotFound
-	}
-	if name != nil && strings.TrimSpace(*name) != "" {
-		next.Name = strings.TrimSpace(*name)
-	}
-	if password != nil {
-		hash, err := hashPassword(*password)
+	var hash []byte
+	if password != nil { // bcrypt fora do lock (é lento)
+		h, err := hashPassword(*password)
 		if err != nil {
 			return agent{}, err
 		}
+		hash = h
+	}
+	// Ler, salvar e gravar sob o MESMO lock: senão um remove no meio era desfeito
+	// (o update regravava o atendente apagado, inclusive no banco).
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur, ok := d.byID[id]
+	if !ok {
+		return agent{}, errAgentNotFound
+	}
+	next := *cur
+	if name != nil && strings.TrimSpace(*name) != "" {
+		next.Name = strings.TrimSpace(*name)
+	}
+	if hash != nil {
 		next.hash = hash
 	}
 	if sessions != nil {
@@ -235,9 +238,7 @@ func (d *agentDirectory) update(ctx context.Context, id string, name, password *
 	if err := d.save(ctx, &next); err != nil {
 		return agent{}, err
 	}
-	d.mu.Lock()
 	d.byID[id] = &next
-	d.mu.Unlock()
 	return next, nil
 }
 
@@ -245,16 +246,16 @@ var errAgentNotFound = errors.New("atendente não encontrado")
 
 func (d *agentDirectory) remove(ctx context.Context, id string) error {
 	d.mu.Lock()
-	_, ok := d.byID[id]
-	delete(d.byID, id)
-	d.mu.Unlock()
-	if !ok {
+	defer d.mu.Unlock()
+	if _, ok := d.byID[id]; !ok {
 		return errAgentNotFound
 	}
 	if d.db != nil {
-		_, err := d.db.ExecContext(ctx, `DELETE FROM agents WHERE id=$1`, id)
-		return err
+		if _, err := d.db.ExecContext(ctx, `DELETE FROM agents WHERE id=$1`, id); err != nil {
+			return err
+		}
 	}
+	delete(d.byID, id)
 	return nil
 }
 
