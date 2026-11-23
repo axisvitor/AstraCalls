@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Phone, Video } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -7,12 +7,21 @@ import { DeviceSelector } from "@/components/form/DeviceSelector";
 import { useStartCall } from "@/hooks/useStartCall";
 import { useDevices } from "@/stores/devices";
 import { useLean } from "@/stores/auth";
+import { useDialPrefill } from "@/stores/dial";
 
 export const Dialer = ({ sid }: { sid: string }) => {
   const [phone, setPhone] = useState("");
   const [video, setVideo] = useState(false);
   const micId = useDevices((s) => s.micId);
   const lean = useLean(); // só voz: sem botão de vídeo
+  const prefill = useDialPrefill((s) => s.phone);
+
+  // número vindo da aba Ligações do Chatwoot: preenche (a pessoa confirma em Ligar)
+  useEffect(() => {
+    if (!prefill) return;
+    setPhone(prefill);
+    useDialPrefill.setState({ phone: null });
+  }, [prefill]);
   const startCall = useStartCall(sid, micId);
 
   const submit = () => {

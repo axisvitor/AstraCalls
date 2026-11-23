@@ -14,6 +14,7 @@ import { ensureCallsWired } from "@/stores/calls";
 import { useTheme } from "@/stores/theme";
 import { useIsAgent } from "@/stores/auth";
 import { startAgentTokenRefresh } from "@/lib/auth";
+import { consumeDialHash } from "@/stores/dial";
 
 export const App = () => {
   const sessions = useSessions((s) => s.sessions);
@@ -29,6 +30,12 @@ export const App = () => {
   useEffect(() => {
     if (isAgent) startAgentTokenRefresh();
   }, [isAgent]);
+
+  useEffect(() => {
+    consumeDialHash();
+    window.addEventListener("hashchange", consumeDialHash);
+    return () => window.removeEventListener("hashchange", consumeDialHash);
+  }, []);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
 

@@ -8,6 +8,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { useVersion } from "@/hooks/useVersion";
 import { useAuthInfo } from "@/stores/auth";
 import { AgentsDialog } from "@/components/domain/session/AgentsDialog";
+import { EmbedDialog } from "@/components/domain/session/EmbedDialog";
 
 export const AppShell = ({ children }: { children: ReactNode }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -60,6 +61,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
                 </span>
               )}
               {!isAgent && <AgentsDialog />}
+              {!isAgent && <EmbedDialog />}
               {!lean && (
               <Button variant="outline" size="icon" className="rounded-full" asChild>
                 <a

@@ -81,7 +81,9 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="truncate text-xl font-semibold tracking-tight">{session.name}</h1>
-          <Badge variant={statusVariant[session.state]}>{statusLabel[session.state]}</Badge>
+          <Badge variant={statusVariant[session.state]}>
+            {isAgent && !session.paired && session.state !== "connecting" ? "Desconectada" : statusLabel[session.state]}
+          </Badge>
         </div>
         {connectedPhone ? (
           <div className="flex items-center gap-1.5 text-sm">

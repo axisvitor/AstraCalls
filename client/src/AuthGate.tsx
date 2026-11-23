@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { App } from "./App";
+import { EmbedChatwoot } from "./pages/EmbedChatwoot";
 import { LoginScreen } from "./components/auth/LoginScreen";
 import { checkAuth } from "@/lib/auth";
 
@@ -12,5 +13,7 @@ export const AuthGate = () => {
 
   if (state === "checking") return null;
   if (state === "login") return <LoginScreen onSuccess={() => setState("ok")} />;
+  // aba Ligações dentro da conversa do Chatwoot (Dashboard App)
+  if (location.pathname.startsWith("/embed/chatwoot")) return <EmbedChatwoot />;
   return <App />;
 };
