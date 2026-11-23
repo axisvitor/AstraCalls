@@ -33,6 +33,12 @@ type CallRecord struct {
 	// Missed: chamada RECEBIDA que acabou sem ser atendida aqui nem em outro
 	// aparelho (perdida, recusada ou expirada) — o painel destaca e oferece retornar.
 	Missed bool `json:"missed,omitempty"`
+	// TransferTo: clientId do navegador para quem a chamada foi transferida ("" =
+	// qualquer um da linha). Só esse pode assumir (pickup).
+	TransferTo string `json:"-"`
+	// Transferred: oferecida a outro atendente (só offerTransfer liga). Sem isto
+	// uma chamada sem dono fora do toque não pode ser assumida.
+	Transferred bool `json:"-"`
 }
 
 type AuthSnapshot struct {
@@ -122,9 +128,10 @@ type Broker struct {
 	subs    map[*subscriber]struct{}
 	calls   map[string]*CallRecord
 	history []CallRecord
-	// labels: clientId -> nome do atendente, para o histórico mostrar quem
-	// atendeu/ligou (o dono da chamada é o clientId do navegador).
-	labels map[string]string
+
+	// AgentName (opcional) devolve o nome do atendente pelo id, para o histórico
+	// (o dono de uma chamada de atendente é "agent:<id>", ver callOwnerID).
+	AgentName func(id string) string
 
 	// OnEnded (opcional) recebe cada chamada encerrada, já com o resultado final
 	// (persistência do histórico). Chamado fora do lock, uma vez por chamada.
@@ -157,9 +164,8 @@ func (b *Broker) scopeOf(sessionID string) (sc sessionScope) {
 
 func NewBroker() *Broker {
 	return &Broker{
-		subs:   map[*subscriber]struct{}{},
-		calls:  map[string]*CallRecord{},
-		labels: map[string]string{},
+		subs:  map[*subscriber]struct{}{},
+		calls: map[string]*CallRecord{},
 	}
 }
 
@@ -328,16 +334,6 @@ func (b *Broker) broadcastForSessionSplit(sessionID string, ev, agentEv any) {
 	}
 }
 
-// setClientLabel associa um clientId (navegador) ao nome do atendente.
-func (b *Broker) setClientLabel(clientID, name string) {
-	if clientID == "" {
-		return
-	}
-	b.mu.Lock()
-	b.labels[clientID] = name
-	b.mu.Unlock()
-}
-
 // emitSessionList manda a cada assinante só as sessões do escopo dele (o painel
 // admin vê todas; o widget de uma conta, só as da própria conta/caixa).
 func (b *Broker) emitSessionList(sessions []SessionInfo) {
@@ -436,6 +432,9 @@ func (b *Broker) reassignOwner(id string, owner *string) bool {
 		return false
 	}
 	c.Owner = owner
+	if owner != nil {
+		c.TransferTo, c.Transferred = "", false // alguém assumiu: a oferta acabou
+	}
 	rec := *c
 	b.mu.Unlock()
 	b.broadcastCallList()
@@ -444,6 +443,29 @@ func (b *Broker) reassignOwner(id string, owner *string) bool {
 		"status": rec.Status, "peer": rec.Peer, "startedAt": rec.StartedAt, "held": rec.Held,
 	})
 	return true
+}
+
+// callsOwnedBy lista as chamadas ativas de um dono.
+func (b *Broker) callsOwnedBy(owner string) []CallRecord {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var out []CallRecord
+	for _, c := range b.calls {
+		if c.Owner != nil && *c.Owner == owner {
+			out = append(out, *c)
+		}
+	}
+	return out
+}
+
+// offerTransfer libera o dono e marca para quem a chamada foi transferida.
+func (b *Broker) offerTransfer(id, to string) {
+	b.mu.Lock()
+	if c, ok := b.calls[id]; ok {
+		c.TransferTo, c.Transferred = to, true
+	}
+	b.mu.Unlock()
+	b.reassignOwner(id, nil)
 }
 
 func (b *Broker) ownerActiveCall(owner string) string {
@@ -472,8 +494,10 @@ func (b *Broker) endCall(id, reason string) {
 	c.Status = StatusEnded
 	c.EndedAt = &now
 	c.EndReason = reason
-	if c.Owner != nil {
-		c.Agent = b.labels[*c.Owner]
+	if c.Owner != nil && b.AgentName != nil {
+		if id, ok := strings.CutPrefix(*c.Owner, agentOwnerPrefix); ok {
+			c.Agent = b.AgentName(id)
+		}
 	}
 	ended := *c
 	delete(b.calls, id)
@@ -628,6 +652,19 @@ func (b *Broker) emitCallSpy(sessionID, id string, count int) {
 
 func (b *Broker) emitIncomingClaimed(sessionID, id, owner string) {
 	b.broadcastForSession(sessionID, map[string]any{"type": "incoming-claimed", "sessionId": sessionID, "id": id, "owner": owner})
+}
+
+// historyCall acha uma chamada encerrada pelo id (nil se não estiver no histórico).
+func (b *Broker) historyCall(id string) (*CallRecord, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for i := len(b.history) - 1; i >= 0; i-- {
+		if b.history[i].CallID == id {
+			cp := b.history[i]
+			return &cp, true
+		}
+	}
+	return nil, false
 }
 
 func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {

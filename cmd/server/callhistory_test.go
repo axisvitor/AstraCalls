@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -172,5 +173,44 @@ func TestEnvBoolDefault(t *testing.T) {
 	t.Setenv("X_BOOL", "1")
 	if !envBoolDefault("X_BOOL", false) {
 		t.Fatal("1 explícito ignorado")
+	}
+}
+
+// Atender perto do fim do toque: o timer para no doAccept (antes do <accept>), e
+// não derruba depois uma chamada já aceita (com a mídia ainda conectando).
+func TestAcceptStopsRingTimer(t *testing.T) {
+	prevSecs, prevRej := ringTimeoutSecs, autoReject
+	t.Cleanup(func() { ringTimeoutSecs, autoReject = prevSecs, prevRej })
+	ringTimeoutSecs, autoReject = 1, false
+	s, b, _ := ringingSession(t)
+	s.armRingTimeout("c1")
+	srv := &server{broker: b, log: slog.Default()}
+	req := httptest.NewRequest("POST", "/api/sessions/s1/calls/c1/accept", nil)
+	req.SetPathValue("id", "c1")
+	srv.doAccept(s, httptest.NewRecorder(), req)
+	time.Sleep(1300 * time.Millisecond)
+	if _, ok := s.reg.get("c1"); !ok {
+		t.Fatal("o timer de toque derrubou uma chamada já aceita")
+	}
+	if c, _ := b.getCall("c1"); c == nil {
+		t.Fatal("chamada aceita sumiu do broker")
+	}
+}
+
+// Aceita mas a mídia nunca conecta (e o WhatsApp não encerra): o prazo de conexão
+// encerra com <terminate>.
+func TestAcceptedButNeverConnected(t *testing.T) {
+	prev := acceptConnectTimeout
+	t.Cleanup(func() { acceptConnectTimeout = prev })
+	acceptConnectTimeout = 100 * time.Millisecond
+	s, b, sock := ringingSession(t)
+	srv := &server{broker: b, log: slog.Default()}
+	req := httptest.NewRequest("POST", "/api/sessions/s1/calls/c1/accept", nil)
+	req.SetPathValue("id", "c1")
+	srv.doAccept(s, httptest.NewRecorder(), req)
+	// o <terminate> sai (em produção o OnEnded ligado pelo wireCall tira a chamada
+	// do registro; este CallManager de teste não é ligado)
+	if !waitTags(sock, "terminate") {
+		t.Fatalf("não encerrou a chamada que não conectou: %v", sock.sent())
 	}
 }

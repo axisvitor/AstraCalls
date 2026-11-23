@@ -187,3 +187,23 @@ func (s *server) handleLIDPhone(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"phone": phone})
 }
+
+// servedUnderChatwoot: pedido que chegou pelo caminho do domínio do Chatwoot
+// (modo mesma origem): o proxy mandou X-Forwarded-Prefix e o host é um dos
+// Chatwoot de WACALLS_EMBED_ORIGINS. Um StripPrefix (ex.: Traefik) no domínio
+// próprio do AstraCalls não entra aqui.
+func servedUnderChatwoot(r *http.Request) bool {
+	if strings.TrimSpace(r.Header.Get("X-Forwarded-Prefix")) == "" {
+		return false
+	}
+	host := strings.ToLower(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.ToLower(r.Host)
+	}
+	for _, o := range embedOrigins() {
+		if chatwootHost(o) == host {
+			return true
+		}
+	}
+	return false
+}

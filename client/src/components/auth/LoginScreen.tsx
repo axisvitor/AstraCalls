@@ -26,7 +26,8 @@ export const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
       } else {
         const r = await fetch(`${base}/api/config`, { headers: { "X-API-Key": secret } });
         if (!r.ok) {
-          setErr(r.status === 401 ? "API key inválida" : `Erro ${r.status}`);
+          const msg = ((await r.json().catch(() => ({}))) as { error?: string }).error;
+          setErr(r.status === 401 ? "API key inválida" : msg || `Erro ${r.status}`);
           return;
         }
         setAuth(base, secret);

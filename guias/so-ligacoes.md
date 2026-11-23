@@ -15,7 +15,11 @@ navegador.
 - Não fala com o Chatwoot, mesmo que haja configuração antiga salva.
 - Não abre a porta SIP (5060).
 - As rotas de envio de mensagem, disparo em massa, agendamento, status, presença,
-  Chatwoot e MCP respondem `403` com `"desativado no modo só ligações"`.
+  Chatwoot e MCP respondem `403` com `"desativado no modo só ligações"`. As de
+  grupos, contatos, comunidades, canais, perfil e privacidade só aceitam leitura
+  (bloquear contato, sair de grupo etc. mexeriam no celular e no outro sistema).
+- Webhooks configurados não recebem eventos com conteúdo de mensagem (`message`,
+  `reaction`, `deleted`, enquete, formulário…); os de chamada e de sessão seguem.
 - Uma chamada que toca até o fim do tempo **não é recusada**: só some do painel e o
   celular da loja continua tocando.
 
@@ -61,6 +65,7 @@ Já definidas no compose (mude só se precisar):
 | `WACALLS_AUTO_REJECT` | `false` neste modo | `true` volta ao comportamento antigo (veja abaixo) |
 | `WACALLS_DEVICE_NAME` | `AstraCalls` | Nome em "Dispositivos conectados" no celular (vale para pareamentos novos) |
 | `WACALLS_MAX_CALLS` | `8` | Chamadas simultâneas por número |
+| `WACALLS_TRUSTED_PROXIES` | redes privadas do docker | De quem aceitar o `X-Forwarded-For` (o Caddy). Sem isso, atrás de proxy, todos os vendedores parecem vir do mesmo IP e o limite de login por IP vale para a loja inteira |
 
 ### Sobre o tempo de toque (`WACALLS_RING_TIMEOUT_SECONDS`)
 
@@ -113,6 +118,10 @@ defina `WACALLS_UDP_PORT=50000`, `WACALLS_PUBLIC_IP=auto` e
    ```
 3. Acrescente o trecho do `Caddyfile` (com o seu domínio) ao Caddyfile que já atende
    o Chatwoot e recarregue o Caddy (`caddy reload` ou reinicie o container).
+   O trecho já esconde `/metrics` (responde 404 para fora) e traz, comentado, um
+   limite de tentativas no login pelo Caddy, que só funciona numa imagem do Caddy com
+   o plugin `caddy-ratelimit`. O AstraCalls já limita o login por usuário e por IP.
+   O `.env` (com a chave-mestra) está no `.gitignore` do repositório: não versione.
 4. Abra `https://SEU-DOMINIO`, aba **Administrador**, e entre com a `WACALLS_API_KEY`.
 
 ## Primeiro acesso (administrador)
@@ -211,6 +220,13 @@ chat.sualoja.com.br {
 	# ... o reverse_proxy do Chatwoot que já existe
 }
 ```
+
+**Nesse endereço só entra atendente.** O servidor recusa a chave-mestra quando o
+pedido chega pelo caminho do Chatwoot (com `X-Forwarded-Prefix` e o host de um
+Chatwoot listado em `WACALLS_EMBED_ORIGINS`): a chave ficaria
+guardada no navegador sob o domínio do Chatwoot, ao alcance de qualquer script dele.
+O administrador continua entrando pelo domínio próprio
+(`https://ligacoes.sualoja.com.br`).
 
 Use `WACALLS_EMBED_ORIGINS=https://chat.sualoja.com.br` e, no Chatwoot, a URL
 `https://chat.sualoja.com.br/astracalls/embed/chatwoot`. O painel completo fica em

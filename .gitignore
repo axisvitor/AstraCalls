@@ -50,3 +50,6 @@ Thumbs.db
 /server
 /prints/
 /cmd/server/server
+
+# segredos locais (deploy/so-ligacoes/.env tem a chave-mestra)
+.env

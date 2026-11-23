@@ -29,6 +29,7 @@ func (s *server) routes() http.Handler {
 	// Atendentes: login aberto; gestão só com a chave-mestra (ver agents.go).
 	mux.HandleFunc("POST /api/agent/login", s.handleAgentLogin)
 	mux.HandleFunc("POST /api/agent/refresh", s.handleAgentRefresh)
+	mux.HandleFunc("POST /api/agent/logout", s.handleAgentLogout)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	mux.HandleFunc("PUT /api/agents/{id}", s.handleUpdateAgent)
@@ -292,7 +293,7 @@ func (s *server) routes() http.Handler {
 		}
 	}
 	s.apiMux = mux
-	var handler http.Handler = withCallsOnly(mux)
+	var handler http.Handler = s.withCallOwnership(withCallsOnly(mux))
 	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
 		handler = withAuth(handler, key, os.Getenv("WACALLS_WIDGET_KEY"), func(sid string) (int, int) {
 			return s.sessions.accountIDForSession(sid), s.sessions.inboxIDForSession(sid)
@@ -334,10 +335,26 @@ func withCORS(h http.Handler) http.Handler {
 func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid string) (acct, inbox int), agentAuth func(tok string) (*agent, bool)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook") && p != "/api/agent/login"
+		// Barra codificada (%2F) num caminho /api/ não tem uso legítimo e faz o
+		// caminho decodificado (que as regras abaixo olham) divergir do que o roteador
+		// casa: ".../contacts/123%2Fchatwoot%2Fwebhook" parecia o webhook isento.
+		if strings.HasPrefix(p, "/api/") && strings.Contains(strings.ToLower(r.URL.EscapedPath()), "%2f") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+			return
+		}
+		guarded := strings.HasPrefix(p, "/api/") && !chatwootWebhookPath.MatchString(p) && p != "/api/agent/login"
 		if guarded {
 			got := requestAPIKey(r)
 			if got == key {
+				// Painel servido sob um caminho do domínio do Chatwoot (mesma origem):
+				// a chave ficaria no armazenamento daquela origem, legível por qualquer
+				// script do Chatwoot. Ali só entra atendente.
+				if servedUnderChatwoot(r) {
+					writeJSON(w, http.StatusForbidden, map[string]string{
+						"error": "a chave-mestra não é aceita no painel servido sob o domínio do Chatwoot; entre como administrador pelo domínio próprio do AstraCalls",
+					})
+					return
+				}
 				h.ServeHTTP(w, r) // chave-mestra: libera tudo
 				return
 			}
@@ -391,6 +408,9 @@ func withAuth(h http.Handler, key, widgetKey string, sessionScope func(sid strin
 	})
 }
 
+// chatwootWebhookPath é a ÚNICA rota /api/ isenta de chave (o Chatwoot chama de fora).
+var chatwootWebhookPath = regexp.MustCompile(`^/api/sessions/[^/]+/chatwoot/webhook$`)
+
 // sessionIDFromPath devolve o {sid} de /api/sessions/{sid}/... ("" se não for rota de sessão).
 func sessionIDFromPath(p string) string {
 	rest, ok := strings.CutPrefix(p, "/api/sessions/")
@@ -399,6 +419,14 @@ func sessionIDFromPath(p string) string {
 	}
 	sid, _, _ := strings.Cut(rest, "/")
 	return sid
+}
+
+// sessionSubroute devolve o 1º trecho depois de /api/sessions/{sid}/ ("" se não houver).
+func sessionSubroute(p string) string {
+	rest, _ := strings.CutPrefix(p, "/api/sessions/")
+	_, rest, _ = strings.Cut(rest, "/")
+	first, _, _ := strings.Cut(rest, "/")
+	return first
 }
 
 // requestAPIKey extrai a chave da requisição (X-API-Key, Bearer ou ?apiKey=).
@@ -453,7 +481,7 @@ func widgetAllowed(r *http.Request) bool {
 		return true
 	// operações de chamada: iniciar, atender/recusar, webrtc, vídeo, encerrar
 	// (/api/sessions/{sid}/calls e abaixo). Não abre a gestão de sessões em si.
-	case strings.HasPrefix(p, "/api/sessions/") && strings.Contains(p, "/calls"):
+	case strings.HasPrefix(p, "/api/sessions/") && sessionSubroute(p) == "calls":
 		return true
 	}
 	return false
@@ -590,12 +618,9 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		for _, sid := range a.Sessions {
 			only[sid] = true
 		}
-		s.broker.setClientLabel(cid, a.Name) // nome no histórico de quem atendeu/ligou
 		ctx, cancel := s.agentStreamContext(r)
 		defer cancel()
 		r = r.WithContext(ctx)
-	} else {
-		s.broker.setClientLabel(cid, "") // mesmo navegador usado depois pelo admin
 	}
 	s.log.Info("sse connect", "clientId", cid, "accountId", acc, "origin", r.Header.Get("Origin"), "cwHost", host, "inboxes", len(inboxes))
 	s.broker.serveSSE(w, r, cid, acc, host, inboxes, only)
@@ -917,7 +942,7 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	_ = ac.cm.Hold(true)
 
 	from := clientID(r)
-	s.broker.reassignOwner(id, nil) // libera o dono para o alvo poder assumir
+	s.broker.offerTransfer(id, strings.TrimSpace(body.To)) // libera o dono; só o alvo assume
 	peer := ""
 	if cr, ok := s.broker.getCall(id); ok && cr != nil {
 		peer = cr.Peer
@@ -944,7 +969,7 @@ func (s *server) handlePickup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
 		return
 	}
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	if !s.broker.reassignOwner(id, &owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
 		return
@@ -978,7 +1003,7 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "phone required"})
 		return
 	}
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	if agentFrom(r) != nil {
 		body.Record = false // gravar é decisão do administrador (gravação por sessão)
 	}
@@ -1110,7 +1135,7 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
 		return
 	}
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	// Antes bloqueávamos o operador de aceitar uma 2ª chamada com uma já ativa. Agora
 	// permitimos "atender em espera": o painel coloca a atual em hold e aceita a nova.
 	// Mantemos só a reivindicação de dono (evita dois clientes pegarem a mesma chamada).
@@ -1124,10 +1149,18 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 	if s.sipGW != nil {
 		s.sipGW.cancelInboundRing(id)
 	}
+	// O <accept> vai sair agora: o timer de toque não pode mais derrubar a chamada
+	// (antes só parava quando a mídia ficava ativa, e um aceite perto do fim do
+	// toque deixava quem ligou numa chamada morta).
+	sess.reg.stopRingTimer(id)
+	ac.answered.Store(true)
 	if err := ac.cm.AcceptCall(r.Context(), id); err != nil {
+		ac.answered.Store(false)
+		sess.armRingTimeout(id) // não aceitou: volta a valer o timeout de toque
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	sess.armConnectTimeout(id)
 	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": id}})
 }
 

@@ -229,7 +229,7 @@ func (r *callRecorder) finish() (path string, seconds int, ok bool) {
 			r.finishedOK = false
 			return
 		}
-		outPath := filepath.Join(dir, r.callID+".mp3")
+		outPath := filepath.Join(dir, recordingFileName(r.callID))
 		if err := encodeMP3(outPath, r.mixed); err != nil {
 			r.log.Warn("recording encode failed", "call_id", r.callID, "err", err)
 			r.finishedOK = false

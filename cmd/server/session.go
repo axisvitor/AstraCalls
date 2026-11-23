@@ -548,6 +548,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if existing != nil {
 			rec.Owner = existing.Owner
 			rec.StartedAt = existing.StartedAt
+			rec.TransferTo, rec.Transferred = existing.TransferTo, existing.Transferred
 		}
 		s.mgr.broker.upsertCall(rec)
 	}
@@ -742,6 +743,21 @@ func (s *Session) armRingTimeout(callID string) {
 	s.reg.setRingTimer(callID, t)
 }
 
+// acceptConnectTimeout: prazo para a mídia conectar depois do <accept>. Sem ele,
+// uma chamada aceita que nunca fica ativa nem recebe encerramento ficaria presa
+// (o timer de toque já foi parado no aceite). Cancelado quando a mídia conecta.
+var acceptConnectTimeout = 60 * time.Second
+
+func (s *Session) armConnectTimeout(callID string) {
+	s.reg.setRingTimer(callID, time.AfterFunc(acceptConnectTimeout, func() {
+		if c, ok := s.mgr.broker.getCall(callID); ok && c.Status == StatusConnected {
+			return
+		}
+		s.log.Info("chamada aceita não conectou a mídia a tempo; encerrando", "call_id", callID)
+		s.terminateCall(callID, core.EndCallReasonFailed) // já aceita: <terminate> é o certo
+	}))
+}
+
 // expireRingingCall encerra uma chamada que ficou tocando além do timeout sem
 // nunca ter sido atendida nem recebido encerramento. Recusa no WhatsApp, avisa
 // TODOS os assinantes (call-ended) e libera a vaga.
@@ -786,11 +802,7 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 // maybeMarkRead confirma leitura automática das mensagens recebidas quando
 // read_messages está ligado na config do Chatwoot (paridade com a Evolution).
 func (s *Session) maybeMarkRead(ctx context.Context, evt *events.Message) {
-	if callsOnly || !s.getChatwoot().ReadMessages || evt.Info.IsFromMe {
-		return
-	}
-	// não faz sentido/formato p/ newsletters e status/broadcast
-	if evt.Info.Chat.Server == types.NewsletterServer || evt.Info.Chat.Server == types.BroadcastServer {
+	if !s.shouldMarkRead(evt) {
 		return
 	}
 	go func() {
@@ -799,6 +811,15 @@ func (s *Session) maybeMarkRead(ctx context.Context, evt *events.Message) {
 			s.log.Debug("read_messages: mark read failed", "err", err)
 		}
 	}()
+}
+
+// shouldMarkRead decide se a mensagem recebida ganha recibo de leitura.
+func (s *Session) shouldMarkRead(evt *events.Message) bool {
+	if callsOnly || !s.getChatwoot().ReadMessages || evt.Info.IsFromMe {
+		return false
+	}
+	// não faz sentido/formato p/ newsletters e status/broadcast
+	return evt.Info.Chat.Server != types.NewsletterServer && evt.Info.Chat.Server != types.BroadcastServer
 }
 
 func (s *Session) handleEvent(rawEvt any) {
@@ -951,7 +972,8 @@ func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCall
 	// ignorado, então a chamada nunca encerrava (ringtone preso nos atendentes e
 	// vaga presa no limite de chamadas). Agora tratamos como terminal.
 	if nodeHasTerminalCall(evt.Node) {
-		s.log.Info("call encerrada em outro device (terminal via UnknownCallEvent)", "call_id", callID)
+		s.log.Info("call encerrada em outro device (terminal via UnknownCallEvent)", "call_id", callID,
+			"from", evt.Node.AttrGetter().OptionalString("from"), "children", terminalChildren(evt.Node))
 		ac.cm.HandleCallTerminate(evt.Node) // → OnEnded → broker.endCall (avisa TODOS) + removeCall
 		return
 	}
@@ -965,6 +987,17 @@ func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCall
 	default:
 		ac.cm.HandleVideoState(ctx, evt.Node)
 	}
+}
+
+// terminalChildren descreve os filhos <terminate>/<reject> (tag e reason) para log.
+func terminalChildren(node *waBinary.Node) string {
+	var out []string
+	for _, c := range node.GetChildren() {
+		if c.Tag == "terminate" || c.Tag == "reject" {
+			out = append(out, c.Tag+":"+wanode.AttrString(c.Attrs, "reason"))
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 // nodeHasTerminalCall diz se um <call> traz um <terminate> ou <reject> entre os
@@ -1122,6 +1155,26 @@ func (s *Session) info() SessionInfo {
 		SIPExtEnabled: extEnabled, SIPExtHost: extHost, SIPExtPort: extPort,
 		SIPExtUser: extUser, SIPExtPass: extPass, SIPExtDest: extDest, SIPExtProxy: extProxy,
 		SIPExtStatus: extStatus, SIPExtError: extErr, SIPExtInboundMode: inboundMode,
+	}
+}
+
+// dropBrowserAudio solta as pontes de áudio do navegador (WebRTC/WS) de uma
+// chamada sem encerrá-la no WhatsApp.
+func (s *Session) dropBrowserAudio(callID string) {
+	oldWS, oldB, oldOC, found := s.reg.setWSBridge(callID, nil, nil)
+	if !found {
+		return
+	}
+	if oldB != nil {
+		oldB.DisableTerminate()
+		oldB.Close()
+	}
+	if oldWS != nil {
+		oldWS.DisableTerminate()
+		oldWS.Close()
+	}
+	if oldOC != nil {
+		oldOC.Close()
 	}
 }
 
