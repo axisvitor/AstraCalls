@@ -652,6 +652,13 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
 // só um restart do processo liberava. 0 desliga o timeout.
 var ringTimeoutSecs = envInt("WACALLS_RING_TIMEOUT_SECONDS", 60)
 
+// ringTimeoutReject: ao expirar o toque, recusa a chamada no WhatsApp — isso
+// encerra a ligação para quem ligou E para os outros aparelhos do número (o
+// celular para de tocar). Padrão ligado; no modo só ligações o padrão é desligado:
+// a chamada só sai do painel e o celular da loja continua tocando.
+// WACALLS_RING_TIMEOUT_REJECT=true/false sobrescreve.
+var ringTimeoutReject = envBoolDefault("WACALLS_RING_TIMEOUT_REJECT", !callsOnly)
+
 func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	node := wrapCall(evt.From, evt.Data)
 	callID := callIDFromNode(node)
@@ -720,8 +727,10 @@ func (s *Session) expireRingingCall(callID string) {
 		return // atendida (corrida com o timer): não expira
 	}
 	s.log.Info("chamada expirada por timeout de toque (nunca recebeu encerramento do WhatsApp)",
-		"call_id", callID, "timeout_s", ringTimeoutSecs)
-	_ = ac.cm.RejectCall(s.mgr.appCtx, callID, core.EndCallReasonTimeout)
+		"call_id", callID, "timeout_s", ringTimeoutSecs, "reject", ringTimeoutReject)
+	if ringTimeoutReject {
+		_ = ac.cm.RejectCall(s.mgr.appCtx, callID, core.EndCallReasonTimeout)
+	}
 	s.removeCall(callID)
 	s.mgr.broker.endCall(callID, string(core.EndCallReasonTimeout))
 }

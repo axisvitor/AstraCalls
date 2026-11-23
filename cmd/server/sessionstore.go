@@ -144,6 +144,10 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 		return nil, err
 	}
 
+	if err := ensureCallHistoryTable(ctx, db); err != nil {
+		return nil, err
+	}
+
 	return &sessionStore{db: db}, nil
 }
 

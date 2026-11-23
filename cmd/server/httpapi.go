@@ -910,7 +910,11 @@ func (s *server) handlePickup(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(sess.id, 50)})
+		limit := asInt(r.URL.Query().Get("limit"))
+		if limit <= 0 {
+			limit = 50
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(sess.id, min(limit, historyMemCap))})
 	}
 }
 

@@ -20,12 +20,17 @@ import (
 var callsOnly = envBool("WACALLS_CALLS_ONLY")
 
 // envBool lê uma variável de ambiente booleana ("1", "true", "yes", "on").
-func envBool(key string) bool {
+func envBool(key string) bool { return envBoolDefault(key, false) }
+
+// envBoolDefault é o envBool com padrão para quando a variável não está setada.
+func envBoolDefault(key string, def bool) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
 	case "1", "true", "yes", "on", "sim":
 		return true
+	case "0", "false", "no", "off", "nao", "não":
+		return false
 	}
-	return false
+	return def
 }
 
 // callsOnlyBlockedSessionRoutes são os primeiros segmentos de /api/sessions/{sid}/...

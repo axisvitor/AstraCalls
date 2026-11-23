@@ -48,6 +48,18 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	}
 
 	broker := NewBroker()
+	if rows, err := store.recentCalls(ctx, callHistoryLoad); err != nil {
+		log.Warn("histórico de chamadas: não carregou do banco", "err", err)
+	} else {
+		broker.loadHistory(rows)
+	}
+	broker.OnEnded = func(rec CallRecord) {
+		go func() {
+			if err := store.saveCall(context.Background(), rec); err != nil {
+				log.Warn("histórico de chamadas: não gravou", "call_id", rec.CallID, "err", err)
+			}
+		}()
+	}
 	mgr := newSessionManager(ctx, provider, broker, store, waLogger, log, maxCalls)
 	broker.SessionsFn = mgr.infos
 	broker.AccountForSession = mgr.accountIDForSession

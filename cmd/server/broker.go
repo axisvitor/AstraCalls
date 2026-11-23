@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,6 +30,9 @@ type CallRecord struct {
 	EndReason string     `json:"endReason,omitempty"`
 	Source    string     `json:"source,omitempty"` // "sip" no modo agente; vazio = WhatsApp
 	Agent     string     `json:"agent,omitempty"`  // nome do atendente que atendeu/ligou (histórico)
+	// Missed: chamada RECEBIDA que acabou sem ser atendida aqui nem em outro
+	// aparelho (perdida, recusada ou expirada) — o painel destaca e oferece retornar.
+	Missed bool `json:"missed,omitempty"`
 }
 
 type AuthSnapshot struct {
@@ -121,6 +125,10 @@ type Broker struct {
 	// labels: clientId -> nome do atendente, para o histórico mostrar quem
 	// atendeu/ligou (o dono da chamada é o clientId do navegador).
 	labels map[string]string
+
+	// OnEnded (opcional) recebe cada chamada encerrada, já com o resultado final
+	// (persistência do histórico). Chamado fora do lock, uma vez por chamada.
+	OnEnded func(CallRecord)
 
 	// SessionsFn lista as sessões para o retrato inicial do SSE (filtrado por escopo).
 	SessionsFn func() []SessionInfo
@@ -460,6 +468,7 @@ func (b *Broker) endCall(id, reason string) {
 		return
 	}
 	now := time.Now().UnixMilli()
+	c.Missed = isMissedCall(*c, reason)
 	c.Status = StatusEnded
 	c.EndedAt = &now
 	c.EndReason = reason
@@ -469,14 +478,37 @@ func (b *Broker) endCall(id, reason string) {
 	ended := *c
 	delete(b.calls, id)
 	b.history = append(b.history, ended)
+	if len(b.history) > historyMemCap {
+		b.history = append([]CallRecord(nil), b.history[len(b.history)-historyMemCap:]...)
+	}
 	owner := c.Owner
 	sessionID := c.SessionID
 	b.mu.Unlock()
+	if b.OnEnded != nil {
+		b.OnEnded(ended)
+	}
 
 	b.broadcastForSession(sessionID, map[string]any{
 		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "reason": reason, "endedAt": now,
 	})
 	b.broadcastCallList()
+}
+
+// historyMemCap limita o histórico em memória (o banco guarda tudo).
+const historyMemCap = 2000
+
+// isMissedCall: recebida, nunca conectada, sem dono (ninguém atendeu no painel) e
+// não atendida em outro aparelho do número (reason "accepted_elsewhere").
+func isMissedCall(c CallRecord, reason string) bool {
+	return c.Direction == "inbound" && c.Status != StatusConnected && c.Owner == nil &&
+		!strings.HasSuffix(reason, "_elsewhere")
+}
+
+// loadHistory repõe o histórico salvo (mais antigo primeiro) ao subir o servidor.
+func (b *Broker) loadHistory(rows []CallRecord) {
+	b.mu.Lock()
+	b.history = append(rows, b.history...)
+	b.mu.Unlock()
 }
 
 func (b *Broker) broadcastCallList() {
