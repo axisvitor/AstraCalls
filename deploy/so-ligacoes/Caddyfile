@@ -3,6 +3,26 @@
 # WebSocket (áudio) e SSE (eventos de chamada) passam sem configuração extra;
 # não use "encode" aqui para não segurar os eventos em buffer.
 ligacoes.sualoja.com.br {
+	# /metrics é só para monitoramento interno: não responde para fora.
+	respond /metrics 404
+
+	# Limite de tentativas de login (opcional, a mais do limite que o próprio
+	# AstraCalls já faz por usuário e por IP). O Caddy padrão NÃO tem rate limit:
+	# precisa da imagem com o plugin github.com/mholt/caddy-ratelimit
+	# (xcaddy build --with github.com/mholt/caddy-ratelimit) e, no topo do
+	# Caddyfile, { order rate_limit before reverse_proxy }. Aí descomente:
+	#
+	# rate_limit {
+	# 	zone login {
+	# 		match {
+	# 			path /api/agent/login
+	# 		}
+	# 		key {remote_host}
+	# 		events 10
+	# 		window 1m
+	# 	}
+	# }
+
 	reverse_proxy astracalls:8080
 }
 
@@ -11,6 +31,7 @@ ligacoes.sualoja.com.br {
 # Chatwoot. Leia o aviso de segurança no guia antes de usar.
 #
 # chat.sualoja.com.br {
+# 	respond /astracalls/metrics 404
 # 	handle_path /astracalls/* {
 # 		reverse_proxy astracalls:8080 {
 # 			header_up X-Forwarded-Prefix /astracalls

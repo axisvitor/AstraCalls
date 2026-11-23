@@ -118,6 +118,10 @@ defina `WACALLS_UDP_PORT=50000`, `WACALLS_PUBLIC_IP=auto` e
    ```
 3. Acrescente o trecho do `Caddyfile` (com o seu domínio) ao Caddyfile que já atende
    o Chatwoot e recarregue o Caddy (`caddy reload` ou reinicie o container).
+   O trecho já esconde `/metrics` (responde 404 para fora) e traz, comentado, um
+   limite de tentativas no login pelo Caddy, que só funciona numa imagem do Caddy com
+   o plugin `caddy-ratelimit`. O AstraCalls já limita o login por usuário e por IP.
+   O `.env` (com a chave-mestra) está no `.gitignore` do repositório: não versione.
 4. Abra `https://SEU-DOMINIO`, aba **Administrador**, e entre com a `WACALLS_API_KEY`.
 
 ## Primeiro acesso (administrador)
