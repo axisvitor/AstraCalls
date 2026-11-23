@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useAuthInfo } from "@/stores/auth";
 import { eventStream, type BrokerEvent } from "@/lib/event-stream";
 import { getClientId } from "@/lib/client-id";
 import { queryClient, queryKeys } from "@/lib/query";
@@ -106,7 +107,11 @@ export const ensureCallsWired = (): void => {
   });
 };
 
-export const isMine = (call: CallSummary): boolean => call.owner === getClientId();
+// Atendente: o servidor grava o dono como "agent:<id>" (do token); admin: o clientId.
+export const isMine = (call: CallSummary): boolean => {
+  const agentId = useAuthInfo.getState().agent?.id;
+  return call.owner === getClientId() || (!!agentId && call.owner === `agent:${agentId}`);
+};
 
 export const registerOwnConnection = (id: string, conn: OpenCall, initialVideo = false): void => {
   useCalls.setState((s) => {

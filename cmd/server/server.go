@@ -59,6 +59,7 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	} else {
 		broker.loadHistory(rows)
 	}
+	broker.AgentName = func(id string) string { a, _ := agents.get(id); return a.Name }
 	broker.OnEnded = func(rec CallRecord) {
 		go func() {
 			if err := store.saveCall(context.Background(), rec); err != nil {

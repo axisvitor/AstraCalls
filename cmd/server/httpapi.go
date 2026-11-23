@@ -292,7 +292,7 @@ func (s *server) routes() http.Handler {
 		}
 	}
 	s.apiMux = mux
-	var handler http.Handler = withCallsOnly(mux)
+	var handler http.Handler = s.withCallOwnership(withCallsOnly(mux))
 	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
 		handler = withAuth(handler, key, os.Getenv("WACALLS_WIDGET_KEY"), func(sid string) (int, int) {
 			return s.sessions.accountIDForSession(sid), s.sessions.inboxIDForSession(sid)
@@ -608,12 +608,9 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		for _, sid := range a.Sessions {
 			only[sid] = true
 		}
-		s.broker.setClientLabel(cid, a.Name) // nome no histórico de quem atendeu/ligou
 		ctx, cancel := s.agentStreamContext(r)
 		defer cancel()
 		r = r.WithContext(ctx)
-	} else {
-		s.broker.setClientLabel(cid, "") // mesmo navegador usado depois pelo admin
 	}
 	s.log.Info("sse connect", "clientId", cid, "accountId", acc, "origin", r.Header.Get("Origin"), "cwHost", host, "inboxes", len(inboxes))
 	s.broker.serveSSE(w, r, cid, acc, host, inboxes, only)
@@ -935,7 +932,7 @@ func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	_ = ac.cm.Hold(true)
 
 	from := clientID(r)
-	s.broker.reassignOwner(id, nil) // libera o dono para o alvo poder assumir
+	s.broker.offerTransfer(id, strings.TrimSpace(body.To)) // libera o dono; só o alvo assume
 	peer := ""
 	if cr, ok := s.broker.getCall(id); ok && cr != nil {
 		peer = cr.Peer
@@ -962,7 +959,7 @@ func (s *server) handlePickup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
 		return
 	}
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	if !s.broker.reassignOwner(id, &owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
 		return
@@ -996,7 +993,7 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "phone required"})
 		return
 	}
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	if agentFrom(r) != nil {
 		body.Record = false // gravar é decisão do administrador (gravação por sessão)
 	}
@@ -1128,7 +1125,7 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
 		return
 	}
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	// Antes bloqueávamos o operador de aceitar uma 2ª chamada com uma já ativa. Agora
 	// permitimos "atender em espera": o painel coloca a atual em hold e aceita a nova.
 	// Mantemos só a reivindicação de dono (evita dois clientes pegarem a mesma chamada).

@@ -384,7 +384,7 @@ func (c *sipAgentCall) end(reason string, code int) {
 
 // sipAgentAccept: POST /calls/{id}/accept numa chamada do modo agente.
 func (s *server) sipAgentAccept(c *sipAgentCall, w http.ResponseWriter, r *http.Request) {
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	if !s.broker.setOwner(c.id, owner) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "claimed by another client"})
 		return
@@ -594,7 +594,7 @@ func (s *server) sipAgentPickup(c *sipAgentCall, w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "call not answered"})
 		return
 	}
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	if !s.broker.reassignOwner(c.id, &owner) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
 		return
@@ -634,7 +634,7 @@ func (s *server) sipAgentWebRTC(c *sipAgentCall, w http.ResponseWriter, r *http.
 		}
 		_ = c.rtp.WritePCM(media.Downsample48to16(pcm48))
 	}
-	owner := clientID(r)
+	owner := callOwnerID(r)
 	br.OnICEState = func(st string) {
 		s.log.Info("SIP agent: ICE do navegador", "id", c.id, "owner", owner, "state", st)
 	}

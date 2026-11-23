@@ -234,12 +234,15 @@ func TestAgentSessionVisibility(t *testing.T) {
 // O nome do atendente que atendeu/ligou vai para o histórico.
 func TestAgentNameInHistory(t *testing.T) {
 	b := NewBroker()
-	b.setClientLabel("browser-1", "Maria Vendas")
-	owner := "browser-1"
-	b.upsertCall(CallRecord{SessionID: "s1", CallID: "c1", Owner: &owner, Direction: "outbound", Status: StatusConnected})
+	b.AgentName = func(id string) string { return map[string]string{"A1": "Maria Vendas"}[id] }
+	agentOwner := agentOwnerPrefix + "A1"
+	browser := "browser-1" // clientId: escolhido pelo navegador, não identifica ninguém
+	b.upsertCall(CallRecord{SessionID: "s1", CallID: "c1", Owner: &agentOwner, Direction: "outbound", Status: StatusConnected})
+	b.upsertCall(CallRecord{SessionID: "s1", CallID: "c2", Owner: &browser, Direction: "outbound", Status: StatusConnected})
 	b.endCall("c1", "user_ended")
+	b.endCall("c2", "user_ended")
 	rows := b.historyRows("s1", 10)
-	if len(rows) != 1 || rows[0].Agent != "Maria Vendas" {
+	if len(rows) != 2 || rows[1].Agent != "Maria Vendas" || rows[0].Agent != "" {
 		t.Fatalf("histórico = %+v", rows)
 	}
 }

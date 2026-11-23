@@ -548,6 +548,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if existing != nil {
 			rec.Owner = existing.Owner
 			rec.StartedAt = existing.StartedAt
+			rec.TransferTo, rec.Transferred = existing.TransferTo, existing.Transferred
 		}
 		s.mgr.broker.upsertCall(rec)
 	}
