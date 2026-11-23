@@ -529,7 +529,7 @@ func (b *Broker) broadcastCallList() {
 	b.mu.RLock()
 	for s := range b.subs {
 		mine := list
-		if s.accountID != 0 {
+		if s.accountID != 0 || s.sessions != nil {
 			mine = make([]CallRecord, 0, len(list))
 			for _, c := range list {
 				if s.wants(scopes[c.SessionID]) {

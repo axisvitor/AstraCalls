@@ -190,30 +190,42 @@ func TestAgentSessionVisibility(t *testing.T) {
 	b := NewBroker()
 	sub := b.subscribeFiltered("maria", 0, "", nil, map[string]bool{"s1": true})
 	admin := b.subscribe("admin", 0)
+	b.upsertCall(CallRecord{SessionID: "s2", CallID: "c2", Direction: "inbound", Status: StatusRinging})
 	b.emitIncoming("s2", "c2", "5511", "5511", "", false)
 	b.emitAuthState("s1", AuthSnapshot{State: "qr", QR: "QR-SECRETO"})
 	b.emitSessionQR("s1", "QR-SECRETO")
+	b.upsertCall(CallRecord{SessionID: "s1", CallID: "c1", Direction: "inbound", Status: StatusRinging})
 	b.emitIncoming("s1", "c1", "5511", "5511", "", false)
 
-	var agentEvents []map[string]any
+	types := map[string]int{}
 	for len(sub.ch) > 0 {
+		raw := <-sub.ch
 		var ev map[string]any
-		_ = json.Unmarshal(<-sub.ch, &ev)
-		agentEvents = append(agentEvents, ev)
-	}
-	if len(agentEvents) != 2 {
-		t.Fatalf("atendente recebeu %d eventos, quer 2 (auth-state sem QR + incoming s1): %v", len(agentEvents), agentEvents)
-	}
-	for _, ev := range agentEvents {
-		if ev["sessionId"] != "s1" {
-			t.Errorf("atendente recebeu evento de outra sessão: %v", ev)
+		_ = json.Unmarshal(raw, &ev)
+		typ, _ := ev["type"].(string)
+		types[typ]++
+		if bytes.Contains(raw, []byte(`"s2"`)) || bytes.Contains(raw, []byte("QR-SECRETO")) {
+			t.Errorf("atendente recebeu dado de outra sessão ou QR: %s", raw)
 		}
-		if _, has := ev["qr"]; has {
-			t.Errorf("atendente recebeu QR: %v", ev)
+		if typ == "call-list" {
+			for _, c := range ev["calls"].([]any) {
+				if c.(map[string]any)["sessionId"] != "s1" {
+					t.Errorf("call-list do atendente com chamada de outra sessão: %s", raw)
+				}
+			}
 		}
 	}
-	if len(admin.ch) != 4 {
-		t.Fatalf("admin recebeu %d eventos, quer 4", len(admin.ch))
+	if types["incoming"] != 1 || types["auth-state"] != 1 || types["call-list"] == 0 || types["session-qr"] != 0 {
+		t.Fatalf("eventos do atendente = %v", types)
+	}
+	adminSawS2 := false
+	for len(admin.ch) > 0 {
+		if bytes.Contains(<-admin.ch, []byte(`"s2"`)) {
+			adminSawS2 = true
+		}
+	}
+	if !adminSawS2 {
+		t.Fatal("admin deveria ver a sessão s2 (teste vazio)")
 	}
 }
 
@@ -229,3 +241,4 @@ func TestAgentNameInHistory(t *testing.T) {
 		t.Fatalf("histórico = %+v", rows)
 	}
 }
+
