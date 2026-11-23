@@ -1126,6 +1126,26 @@ func (s *Session) info() SessionInfo {
 	}
 }
 
+// dropBrowserAudio solta as pontes de áudio do navegador (WebRTC/WS) de uma
+// chamada sem encerrá-la no WhatsApp.
+func (s *Session) dropBrowserAudio(callID string) {
+	oldWS, oldB, oldOC, found := s.reg.setWSBridge(callID, nil, nil)
+	if !found {
+		return
+	}
+	if oldB != nil {
+		oldB.DisableTerminate()
+		oldB.Close()
+	}
+	if oldWS != nil {
+		oldWS.DisableTerminate()
+		oldWS.Close()
+	}
+	if oldOC != nil {
+		oldOC.Close()
+	}
+}
+
 func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {
 	oldB, oldOC, found := s.reg.setBridge(callID, b, oc)
 	if !found {

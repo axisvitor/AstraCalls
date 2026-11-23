@@ -54,6 +54,11 @@ export const startAgentTokenRefresh = (): void => {
   }, 60 * 60 * 1000);
 };
 
+/** "Sair" do atendente: revoga no servidor os tokens já emitidos. */
+export const agentLogout = async (): Promise<void> => {
+  await fetch(apiUrl("/api/agent/logout"), { method: "POST", headers: { "X-API-Key": getApiKey() } }).catch(() => {});
+};
+
 /** Login de atendente: troca usuário/senha por um token (usado como API key). */
 export const agentLogin = async (base: string, username: string, password: string): Promise<void> => {
   const r = await fetch(`${base}/api/agent/login`, {

@@ -445,6 +445,19 @@ func (b *Broker) reassignOwner(id string, owner *string) bool {
 	return true
 }
 
+// callsOwnedBy lista as chamadas ativas de um dono.
+func (b *Broker) callsOwnedBy(owner string) []CallRecord {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var out []CallRecord
+	for _, c := range b.calls {
+		if c.Owner != nil && *c.Owner == owner {
+			out = append(out, *c)
+		}
+	}
+	return out
+}
+
 // offerTransfer libera o dono e marca para quem a chamada foi transferida.
 func (b *Broker) offerTransfer(id, to string) {
 	b.mu.Lock()

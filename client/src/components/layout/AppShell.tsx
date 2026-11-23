@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Menu, BookOpen, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { isAuthed, clearAuth } from "@/lib/auth";
+import { isAuthed, clearAuth, agentLogout } from "@/lib/auth";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
@@ -83,7 +83,9 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
                   className="rounded-full"
                   aria-label="Sair"
                   title="Sair"
-                  onClick={() => {
+                  onClick={async () => {
+                    // atendente: invalida o token no servidor antes de esquecer aqui
+                    if (isAgent) await agentLogout();
                     clearAuth();
                     location.reload();
                   }}

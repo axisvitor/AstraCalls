@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -42,6 +43,8 @@ type agent struct {
 	Name     string   `json:"name"`
 	Sessions []string `json:"sessions"`
 	hash     []byte
+	// revokedBefore: tokens emitidos até este instante (ms) não valem ("Sair").
+	revokedBefore int64
 }
 
 func (a *agent) canSession(sid string) bool {
@@ -60,10 +63,16 @@ func (a *agent) pwTag() string {
 }
 
 type agentTokenClaims struct {
-	ID  string `json:"id"`
-	PW  string `json:"pw"`
-	Exp int64  `json:"exp"`
+	ID    string `json:"id"`
+	PW    string `json:"pw"`
+	Exp   int64  `json:"exp"`
+	Iat   int64  `json:"iat"`   // emissão (ms): "Sair" invalida o que veio antes
+	Login int64  `json:"login"` // login original (s): a renovação para em agentRefreshMax
 }
+
+// agentRefreshMax: a aba aberta renova o token, mas no máximo até 7 dias depois
+// do login com senha (token roubado não vale para sempre).
+const agentRefreshMax = 7 * 24 * time.Hour
 
 func agentSigningSecret() []byte {
 	mac := hmac.New(sha256.New, []byte(os.Getenv("WACALLS_API_KEY")))
@@ -106,7 +115,8 @@ func newAgentDirectory(ctx context.Context, db *sql.DB) (*agentDirectory, error)
 	)`); err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT id, username, name, pass_hash, sessions FROM agents`)
+	_, _ = db.ExecContext(ctx, `ALTER TABLE agents ADD COLUMN IF NOT EXISTS revoked_before BIGINT NOT NULL DEFAULT 0`)
+	rows, err := db.QueryContext(ctx, `SELECT id, username, name, pass_hash, sessions, revoked_before FROM agents`)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +124,7 @@ func newAgentDirectory(ctx context.Context, db *sql.DB) (*agentDirectory, error)
 	for rows.Next() {
 		var a agent
 		var hash, sess string
-		if err := rows.Scan(&a.ID, &a.Username, &a.Name, &hash, &sess); err != nil {
+		if err := rows.Scan(&a.ID, &a.Username, &a.Name, &hash, &sess, &a.revokedBefore); err != nil {
 			return nil, err
 		}
 		a.hash = []byte(hash)
@@ -129,10 +139,10 @@ func (d *agentDirectory) save(ctx context.Context, a *agent) error {
 		return nil
 	}
 	sess, _ := json.Marshal(a.Sessions)
-	_, err := d.db.ExecContext(ctx, `INSERT INTO agents (id, username, name, pass_hash, sessions)
-		VALUES ($1,$2,$3,$4,$5)
-		ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, pass_hash=EXCLUDED.pass_hash, sessions=EXCLUDED.sessions`,
-		a.ID, a.Username, a.Name, string(a.hash), string(sess))
+	_, err := d.db.ExecContext(ctx, `INSERT INTO agents (id, username, name, pass_hash, sessions, revoked_before)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, pass_hash=EXCLUDED.pass_hash, sessions=EXCLUDED.sessions, revoked_before=EXCLUDED.revoked_before`,
+		a.ID, a.Username, a.Name, string(a.hash), string(sess), a.revokedBefore)
 	return err
 }
 
@@ -321,7 +331,7 @@ func (d *agentDirectory) login(username, password, ip string) (string, agent, ti
 	case !ok:
 		return "", agent{}, time.Time{}, errLoginBad
 	}
-	tok, exp := d.issue(found)
+	tok, exp := d.issue(found, now)
 	return tok, *found, exp, nil
 }
 
@@ -387,9 +397,28 @@ func compareLimited(hash []byte, password string) (match, busy bool) {
 }
 
 // issue emite um token novo para o atendente (login e renovação).
-func (d *agentDirectory) issue(a *agent) (string, time.Time) {
-	exp := d.now().Add(agentTokenTTL)
-	return signHMACToken(agentTokenPrefix, agentSigningSecret(), agentTokenClaims{ID: a.ID, PW: a.pwTag(), Exp: exp.Unix()}), exp
+func (d *agentDirectory) issue(a *agent, login time.Time) (string, time.Time) {
+	now := d.now()
+	exp := now.Add(agentTokenTTL)
+	c := agentTokenClaims{ID: a.ID, PW: a.pwTag(), Exp: exp.Unix(), Iat: now.UnixMilli(), Login: login.Unix()}
+	return signHMACToken(agentTokenPrefix, agentSigningSecret(), c), exp
+}
+
+// revoke invalida todos os tokens já emitidos do atendente ("Sair").
+func (d *agentDirectory) revoke(ctx context.Context, id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur, ok := d.byID[id]
+	if !ok {
+		return errAgentNotFound
+	}
+	next := *cur
+	next.revokedBefore = d.now().UnixMilli()
+	if err := d.save(ctx, &next); err != nil {
+		return err
+	}
+	d.byID[id] = &next
+	return nil
 }
 
 // agentFailsCap limita o mapa de tentativas (o login é aberto: nomes inventados
@@ -411,18 +440,24 @@ func (d *agentDirectory) pruneFails(now time.Time) {
 // fromToken valida um token de atendente: assinatura, expiração, atendente ainda
 // existente e senha não trocada desde o login.
 func (d *agentDirectory) fromToken(tok string) (*agent, bool) {
-	if d == nil || !strings.HasPrefix(tok, agentTokenPrefix+".") {
-		return nil, false
-	}
+	a, _, ok := d.tokenClaims(tok)
+	return a, ok
+}
+
+// tokenClaims valida o token e devolve o atendente atual e as claims.
+func (d *agentDirectory) tokenClaims(tok string) (*agent, agentTokenClaims, bool) {
 	var c agentTokenClaims
+	if d == nil || !strings.HasPrefix(tok, agentTokenPrefix+".") {
+		return nil, c, false
+	}
 	if !parseHMACToken(agentTokenPrefix, agentSigningSecret(), tok, &c) || c.Exp <= d.now().Unix() {
-		return nil, false
+		return nil, c, false
 	}
 	a, ok := d.get(c.ID)
-	if !ok || a.pwTag() != c.PW {
-		return nil, false
+	if !ok || a.pwTag() != c.PW || (a.revokedBefore > 0 && c.Iat <= a.revokedBefore) {
+		return nil, c, false
 	}
-	return &a, true
+	return &a, c, true
 }
 
 // agentAllowedCallActions são as operações de chamada liberadas ao atendente em
@@ -440,7 +475,7 @@ func agentAllowed(r *http.Request, a *agent) bool {
 	switch p {
 	case "/api/config", "/api/events":
 		return r.Method == http.MethodGet
-	case "/api/agent/refresh":
+	case "/api/agent/refresh", "/api/agent/logout":
 		return r.Method == http.MethodPost
 	case "/api/embed/config": // aba Ligações no Chatwoot (só leitura)
 		return r.Method == http.MethodGet
@@ -521,8 +556,28 @@ func (s *server) handleAgentRefresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "só para atendente"})
 		return
 	}
-	tok, exp := s.agents.issue(a)
+	_, c, ok := s.agents.tokenClaims(requestAPIKey(r))
+	login := time.Unix(c.Login, 0)
+	if !ok || c.Login == 0 || s.agents.now().Sub(login) > agentRefreshMax {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "acesso expirou; entre de novo com usuário e senha"})
+		return
+	}
+	tok, exp := s.agents.issue(a, login)
 	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "expiresAt": exp.UTC().Format(time.RFC3339), "agent": a})
+}
+
+// POST /api/agent/logout — "Sair": invalida no servidor todos os tokens do atendente.
+func (s *server) handleAgentLogout(w http.ResponseWriter, r *http.Request) {
+	a := agentFrom(r)
+	if a == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "só para atendente"})
+		return
+	}
+	if err := s.agents.revoke(r.Context(), a.ID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // agentWatchEvery: de quanto em quanto tempo o SSE de um atendente confere se o
@@ -534,6 +589,10 @@ var agentWatchEvery = 30 * time.Second
 func (s *server) agentStreamContext(r *http.Request) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(r.Context())
 	tok := requestAPIKey(r)
+	var connected []string
+	if a := agentFrom(r); a != nil {
+		connected = a.Sessions
+	}
 	go func() {
 		t := time.NewTicker(agentWatchEvery)
 		defer t.Stop()
@@ -542,7 +601,9 @@ func (s *server) agentStreamContext(r *http.Request) (context.Context, context.C
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if _, ok := s.agents.fromToken(tok); !ok {
+				// token inválido OU linhas liberadas mudaram: o filtro do SSE foi
+				// fotografado na conexão, então fecha e o painel reconecta já filtrado.
+				if a, ok := s.agents.fromToken(tok); !ok || !slices.Equal(a.Sessions, connected) {
 					cancel()
 					return
 				}
@@ -604,13 +665,32 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DELETE /api/agents/{id} — só chave-mestra. Os tokens do atendente param na hora.
+// DELETE /api/agents/{id} — só chave-mestra. Os tokens do atendente param na hora
+// e a ponte de áudio das chamadas dele cai.
 func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
-	if err := s.agents.remove(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.agents.remove(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
+	s.dropAgentAudio(id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// dropAgentAudio derruba a ponte de áudio (navegador) das chamadas de um atendente
+// removido. A ligação com o cliente NÃO cai: vai para a espera (música) e é
+// oferecida a todos da linha, como uma transferência sem alvo.
+func (s *server) dropAgentAudio(agentID string) {
+	for _, rec := range s.broker.callsOwnedBy(agentOwnerPrefix + agentID) {
+		if sess, ok := s.sessions.Get(rec.SessionID); ok {
+			sess.dropBrowserAudio(rec.CallID)
+			if ac, ok := sess.reg.get(rec.CallID); ok && ac.cm != nil {
+				_ = ac.cm.Hold(true)
+			}
+		}
+		s.broker.offerTransfer(rec.CallID, "")
+		s.broker.emitTransferOffer(rec.SessionID, rec.CallID, rec.Peer, "", "")
+	}
 }
 
 // clientIP é o IP de quem chamou. X-Forwarded-For só vale quando a conexão vem de

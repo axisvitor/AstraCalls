@@ -205,7 +205,7 @@ func TestRecordingRequiresAuth(t *testing.T) {
 	maria := loginToken(t, d)
 	ma, _ := d.fromToken(maria)
 	bob, _ := d.create(context.Background(), "bob", "Bob", "senha-forte-2", []string{"s1"})
-	bobTok, _ := d.issue(&bob)
+	bobTok, _ := d.issue(&bob, time.Now())
 	b := NewBroker()
 	owner := agentOwnerPrefix + ma.ID
 	b.upsertCall(CallRecord{SessionID: "s1", CallID: "C1", Owner: &owner, Direction: "inbound", Status: StatusConnected})

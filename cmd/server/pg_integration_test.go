@@ -75,6 +75,15 @@ func TestPGAgentsPersist(t *testing.T) {
 	if err != nil || got.Name != name || len(got.Sessions) != 2 {
 		t.Fatalf("login após reinício: %+v %v", got, err)
 	}
+	// "Sair" persiste: depois de recarregar do banco o token antigo segue inválido
+	tok, _, _, _ := d2.login("joao", "senha-forte-1", "198.51.100.1")
+	if err := d2.revoke(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	d2b, _ := newAgentDirectory(ctx, db)
+	if _, ok := d2b.fromToken(tok); ok {
+		t.Fatal("token revogado voltou a valer depois de recarregar")
+	}
 	if err := d2.remove(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}

@@ -29,6 +29,7 @@ func (s *server) routes() http.Handler {
 	// Atendentes: login aberto; gestão só com a chave-mestra (ver agents.go).
 	mux.HandleFunc("POST /api/agent/login", s.handleAgentLogin)
 	mux.HandleFunc("POST /api/agent/refresh", s.handleAgentRefresh)
+	mux.HandleFunc("POST /api/agent/logout", s.handleAgentLogout)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	mux.HandleFunc("PUT /api/agents/{id}", s.handleUpdateAgent)
