@@ -56,7 +56,7 @@ func TestCallsOnlyRefusesMessageRoutes(t *testing.T) {
 	}
 	// rotas de chamada seguem liberadas
 	for _, p := range []string{"/api/sessions/s1/calls", "/api/sessions/s1/calls/abc/accept", "/api/sessions/s1/history", "/api/config", "/api/events", "/api/sessions"} {
-		if callsOnlyBlocked(p) {
+		if callsOnlyBlocked("POST", p) {
 			t.Errorf("%s não deveria ser bloqueada", p)
 		}
 	}
@@ -166,11 +166,11 @@ func TestCallsOnlyBlocksSends(t *testing.T) {
 	setCallsOnly(t, true)
 	for _, p := range []string{"/api/sessions/s1/groups/123@g.us/status", "/api/sessions/s1/groups/123@g.us/history/share",
 		"/api/sessions/s1/disappearing", "/api/sessions/s1/chats/5511@s.whatsapp.net/disappearing"} {
-		if !callsOnlyBlocked(p) {
+		if !callsOnlyBlocked("POST", p) {
 			t.Errorf("%s deveria ser bloqueada", p)
 		}
 	}
-	if callsOnlyBlocked("/api/sessions/s1/groups/123@g.us") {
+	if callsOnlyBlocked("GET", "/api/sessions/s1/groups/123@g.us") {
 		t.Error("consultar grupo não manda mensagem")
 	}
 }
@@ -202,5 +202,66 @@ func TestCapacityWithoutAutoReject(t *testing.T) {
 	panics(func() { s.onIncomingOffer(context.Background(), evt) })
 	if !strings.Contains(logBuf.String(), "inbound call rejected") {
 		t.Fatalf("com recusa automática deveria recusar: log = %s", logBuf.String())
+	}
+}
+
+// Escritas que sincronizam com o celular ficam bloqueadas; leituras seguem.
+func TestCallsOnlyBlocksAccountWrites(t *testing.T) {
+	setCallsOnly(t, true)
+	h := (&server{}).routes()
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/sessions/s1/contacts/5511@s.whatsapp.net/block"},
+		{"POST", "/api/sessions/s1/contacts/5511@s.whatsapp.net/unblock"},
+		{"POST", "/api/sessions/s1/groups"},
+		{"POST", "/api/sessions/s1/groups/1@g.us/leave"},
+		{"PUT", "/api/sessions/s1/groups/1@g.us/subject"},
+		{"POST", "/api/sessions/s1/groups/1@g.us/participants/remove"},
+		{"PUT", "/api/sessions/s1/privacy"},
+		{"PUT", "/api/sessions/s1/profile/status"},
+		{"POST", "/api/sessions/s1/channels/1@newsletter/follow"},
+		{"POST", "/api/sessions/s1/communities"},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(c.method, c.path, nil))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s %s = %d, quer 403", c.method, c.path, rec.Code)
+		}
+	}
+	for _, p := range []string{"/api/sessions/s1/groups", "/api/sessions/s1/contacts/5511@s.whatsapp.net", "/api/sessions/s1/privacy", "/api/sessions/s1/profile"} {
+		if callsOnlyBlocked("GET", p) {
+			t.Errorf("leitura %s não deveria ser bloqueada", p)
+		}
+	}
+}
+
+// Webhook "message" (e demais com conteúdo) não sai em modo só ligações; os de
+// chamada/sessão continuam. Fora do modo, tudo sai.
+func TestCallsOnlyWebhookNoMessage(t *testing.T) {
+	sink := &hookSink{}
+	srv := httptest.NewServer(sink.handler())
+	defer srv.Close()
+	s := &Session{id: "w"}
+	_ = s.updateWebhooks(context.Background(), func([]WebhookTarget) ([]WebhookTarget, error) {
+		return []WebhookTarget{{ID: webhookDefaultID, URL: srv.URL}}, nil
+	})
+	setCallsOnly(t, true)
+	s.dispatchWebhook("message", map[string]any{"text": "segredo"})
+	s.dispatchWebhook("reaction", map[string]any{})
+	s.dispatchWebhook("session_status", map[string]any{"state": "open"})
+	callsOnly = false
+	s.dispatchWebhook("message", map[string]any{"text": "fora do modo"})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && len(sink.got()) < 2 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(400 * time.Millisecond) // dá tempo de chegar o que não deveria
+	got := sink.got()
+	if len(got) != 2 || got[0] == "reaction" || got[1] == "reaction" {
+		t.Fatalf("eventos entregues = %v, quer só session_status (modo) e message (fora do modo)", got)
+	}
+	for _, e := range got {
+		if e != "session_status" && e != "message" {
+			t.Fatalf("evento inesperado %s", e)
+		}
 	}
 }

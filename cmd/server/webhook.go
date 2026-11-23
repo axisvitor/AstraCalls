@@ -14,6 +14,9 @@ import (
 // forma assíncrona. Formato: {session, event, timestamp, data}. Cada webhook
 // aplica o próprio filtro (eventos / ignorar grupos).
 func (s *Session) dispatchWebhook(event string, data any) {
+	if callsOnly && callsOnlyWebhookEvents[event] {
+		return // modo só ligações: conteúdo de mensagem não sai do servidor
+	}
 	hooks := s.getWebhooks()
 	if len(hooks) == 0 {
 		return

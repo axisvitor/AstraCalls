@@ -55,11 +55,29 @@ var callsOnlyBlockedSessionRoutes = map[string]bool{
 // errCallsOnlySend é o que Session.send devolve no modo só ligações.
 var errCallsOnlySend = errors.New("envio de mensagem desativado no modo só ligações (WACALLS_CALLS_ONLY)")
 
+// callsOnlyReadOnlyRoutes: trechos de /api/sessions/{sid}/... que neste modo só
+// podem ser LIDOS. Escrever neles mexe na conta e sincroniza com o celular e com
+// o outro sistema (bloquear contato, sair/editar grupo, privacidade, recado,
+// seguir canal, comunidades).
+var callsOnlyReadOnlyRoutes = map[string]bool{
+	"groups": true, "contacts": true, "communities": true, "channels": true, "profile": true, "privacy": true,
+}
+
+// callsOnlyWebhookEvents: eventos de webhook com conteúdo de mensagem, que não
+// saem do servidor neste modo (os de chamada e de sessão continuam).
+var callsOnlyWebhookEvents = map[string]bool{
+	"message": true, "deleted": true, "reaction": true, "poll_vote": true, "event_response": true,
+	"form_response": true, "view_once": true, "broadcast": true,
+}
+
 // callsOnlyBlocked diz se a rota está desativada no modo só ligações.
-func callsOnlyBlocked(p string) bool {
+func callsOnlyBlocked(method, p string) bool {
 	if rest, ok := strings.CutPrefix(p, "/api/sessions/"); ok {
 		_, rest, _ = strings.Cut(rest, "/")
 		segs := strings.Split(rest, "/")
+		if method != http.MethodGet && callsOnlyReadOnlyRoutes[segs[0]] {
+			return true
+		}
 		// status do grupo e compartilhar histórico do grupo também mandam mensagem
 		if len(segs) >= 3 && segs[0] == "groups" && (segs[2] == "status" || segs[2] == "history") {
 			return true
@@ -78,7 +96,7 @@ func withCallsOnly(h http.Handler) http.Handler {
 		return h
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if callsOnlyBlocked(r.URL.Path) {
+		if callsOnlyBlocked(r.Method, r.URL.Path) {
 			writeJSON(w, http.StatusForbidden, map[string]string{
 				"error": "desativado no modo só ligações (WACALLS_CALLS_ONLY)",
 				"code":  "calls_only",

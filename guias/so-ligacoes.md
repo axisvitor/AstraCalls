@@ -15,7 +15,11 @@ navegador.
 - Não fala com o Chatwoot, mesmo que haja configuração antiga salva.
 - Não abre a porta SIP (5060).
 - As rotas de envio de mensagem, disparo em massa, agendamento, status, presença,
-  Chatwoot e MCP respondem `403` com `"desativado no modo só ligações"`.
+  Chatwoot e MCP respondem `403` com `"desativado no modo só ligações"`. As de
+  grupos, contatos, comunidades, canais, perfil e privacidade só aceitam leitura
+  (bloquear contato, sair de grupo etc. mexeriam no celular e no outro sistema).
+- Webhooks configurados não recebem eventos com conteúdo de mensagem (`message`,
+  `reaction`, `deleted`, enquete, formulário…); os de chamada e de sessão seguem.
 - Uma chamada que toca até o fim do tempo **não é recusada**: só some do painel e o
   celular da loja continua tocando.
 
