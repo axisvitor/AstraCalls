@@ -29,6 +29,10 @@ services:
       # ligações ela NÃO é recusada (WACALLS_AUTO_REJECT=false; o celular continua tocando).
       WACALLS_RING_TIMEOUT_SECONDS: ${WACALLS_RING_TIMEOUT_SECONDS:-90}
       WACALLS_MAX_CALLS: ${WACALLS_MAX_CALLS:-8}
+      # Aba "Ligações" no Chatwoot (Aplicativos do Painel): quem pode embutir
+      # /embed/chatwoot, e qual caixa de entrada liga por qual linha (opcional).
+      WACALLS_EMBED_ORIGINS: ${WACALLS_EMBED_ORIGINS:-}
+      WACALLS_EMBED_INBOXES: ${WACALLS_EMBED_INBOXES:-}
       # Nome que aparece em "Dispositivos conectados" no celular.
       WACALLS_DEVICE_NAME: ${WACALLS_DEVICE_NAME:-AstraCalls}
     networks: [default, caddy]

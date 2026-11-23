@@ -553,6 +553,54 @@ paths:
         "401": { description: "usuário ou senha inválidos" }
         "429": { description: "muitas tentativas erradas; tente de novo mais tarde" }
 
+  /api/agent/refresh:
+    post:
+      tags: [Atendentes]
+      summary: Troca o token válido do atendente por um novo (mais 12 h)
+      responses:
+        "200": { description: "{token, expiresAt, agent}" }
+        "400": { description: só para atendente }
+
+  /api/embed/config:
+    get:
+      tags: [Atendentes]
+      summary: Configuração da aba Ligações no Chatwoot (atendente e admin)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  inboxes: { type: object, additionalProperties: { type: string }, description: "ID da caixa de entrada do Chatwoot -> ID da sessão" }
+                  phoneAttrs: { type: array, items: { type: string }, description: "Atributos do contato com o número, em ordem" }
+    put:
+      tags: [Atendentes]
+      summary: Salva a configuração da aba Ligações (só chave-mestra; vence as variáveis de ambiente)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                inboxes: { type: object, additionalProperties: { type: string } }
+                phoneAttrs: { type: array, items: { type: string } }
+      responses:
+        "200": { description: Configuração efetiva }
+
+  /api/sessions/{sid}/lid-phone:
+    get:
+      tags: [Contatos]
+      summary: Telefone real de um @lid pelo mapa da sessão
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { name: lid, in: query, required: true, schema: { type: string, example: "123456789012345@lid" } }
+      responses:
+        "200": { description: "{phone}" }
+        "404": { description: número ainda não conhecido }
+
   /api/agents:
     get:
       tags: [Atendentes]

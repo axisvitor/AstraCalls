@@ -5,3 +5,16 @@
 ligacoes.sualoja.com.br {
 	reverse_proxy astracalls:8080
 }
+
+# Variante "mesma origem" (aba Ligações liga dentro do Chatwoot): sirva o AstraCalls
+# num caminho do domínio do Chatwoot. Coloque o handle_path ANTES do proxy do
+# Chatwoot. Leia o aviso de segurança no guia antes de usar.
+#
+# chat.sualoja.com.br {
+# 	handle_path /astracalls/* {
+# 		reverse_proxy astracalls:8080 {
+# 			header_up X-Forwarded-Prefix /astracalls
+# 		}
+# 	}
+# 	# ... reverse_proxy do Chatwoot que já existe
+# }

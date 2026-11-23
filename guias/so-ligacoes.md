@@ -149,6 +149,74 @@ O ID da conta aparece no painel do administrador, embaixo do nome da conta.
   atender pelo painel, só deixe tocar.
 - Cinco senhas erradas seguidas travam o usuário por 15 minutos.
 
+## Aba "Ligações" dentro da conversa do Chatwoot (opcional)
+
+O Chatwoot tem um recurso oficial, **Aplicativos do Painel** (Dashboard Apps), que
+mostra uma página como aba dentro da conversa. O AstraCalls oferece essa página em
+`/embed/chatwoot`: ela mostra o nome e o número do cliente, as ligações já feitas com
+ele e o botão **Ligar para este cliente**. É o único ponto de contato com o Chatwoot:
+o AstraCalls não chama a API do Chatwoot, não injeta script e não usa a integração
+Chatwoot da sessão.
+
+1. No `.env`, diga qual Chatwoot pode embutir a página (e só ele):
+   `WACALLS_EMBED_ORIGINS=https://chat.sualoja.com.br`. Sem isso a página recusa iframe.
+   O resto do painel nunca pode ser embutido.
+2. No Chatwoot: **Configurações → Integrações → Aplicativos do Painel → Adicionar**.
+   Nome `Ligações`, URL `https://ligacoes.sualoja.com.br/embed/chatwoot`.
+3. No AstraCalls (administrador), botão **Chatwoot**: para cada caixa de entrada do
+   Chatwoot (o ID aparece na URL: `…/inboxes/12/…`), escolha por qual linha ela liga.
+   Também dá para usar `WACALLS_EMBED_INBOXES=12=ID_DA_CONTA,13=OUTRO_ID`.
+4. Onde está o número do contato: primeiro o telefone do contato; se estiver vazio,
+   os atributos `waha_whatsapp_jid`, `waha_whatsapp_chat_id` e `waha_whatsapp_lid`, nessa
+   ordem (o WAHA preenche esses). Dá para trocar a lista no mesmo botão ou em
+   `WACALLS_EMBED_PHONE_ATTRS`. Contato só com `@lid`: o AstraCalls tenta achar o número
+   pelo WhatsApp; se não souber, a aba pede para digitar.
+
+Como funciona para o vendedor:
+
+- Na primeira vez a aba pede usuário e senha do atendente. O navegador guarda o acesso
+  da aba separado do painel (sites dentro de iframe têm armazenamento próprio), então
+  é um login a mais, uma vez só.
+- **Ligar para este cliente** abre (ou traz para a frente) a aba do painel do
+  AstraCalls, com a linha escolhida e o número já no discador; é só clicar em Ligar.
+  Na primeira vez o navegador pode pedir para permitir pop-ups do Chatwoot.
+  Se o painel não estiver logado, ele pede o login e mantém o número.
+- A ligação acontece na aba do painel porque o Chatwoot carrega a aba sem permissão
+  de microfone, e o navegador não libera o microfone num site de outro domínio.
+- **Ligações recebidas tocam só na aba do painel**, não na aba da conversa (que só
+  existe com a conversa aberta). Deixe a aba do painel sempre aberta.
+- Se o Chatwoot mudar e não mandar os dados da conversa, a aba mostra um campo para
+  digitar o número.
+
+### Variante: ligar dentro da própria aba (mesma origem)
+
+Se o AstraCalls for servido num caminho do **mesmo domínio** do Chatwoot (ex.:
+`https://chat.sualoja.com.br/astracalls/`), o navegador libera o microfone dentro da
+aba e a ligação acontece ali mesmo (a página detecta isso sozinha). No Caddyfile do
+Chatwoot, **antes** do `reverse_proxy` dele:
+
+```
+chat.sualoja.com.br {
+	handle_path /astracalls/* {
+		reverse_proxy astracalls:8080 {
+			header_up X-Forwarded-Prefix /astracalls
+		}
+	}
+	# ... o reverse_proxy do Chatwoot que já existe
+}
+```
+
+Use `WACALLS_EMBED_ORIGINS=https://chat.sualoja.com.br` e, no Chatwoot, a URL
+`https://chat.sualoja.com.br/astracalls/embed/chatwoot`. O painel completo fica em
+`https://chat.sualoja.com.br/astracalls/`.
+
+> **Atenção (segurança):** na mesma origem, o AstraCalls e o Chatwoot passam a
+> compartilhar cookies e armazenamento do navegador. Uma falha de segurança num dos
+> dois (por exemplo, um script malicioso) passa a alcançar o outro: o token do
+> atendente do AstraCalls fica legível para páginas do Chatwoot e vice-versa. Só use
+> esta variante se confiar nos dois sistemas e mantê-los atualizados. O padrão
+> (domínio separado) não tem esse risco.
+
 ## Atualização
 
 ```bash
@@ -164,6 +232,12 @@ O histórico de chamadas e os atendentes ficam no Postgres (volume `pgdata`).
   aparelho por falta de uso. Aqui isso fica desligado (senão o celular deixaria de
   notificar). Se o WhatsApp desconectar o AstraCalls, o número aparece como
   "Desconectado" no painel e é preciso ler o QR de novo. Acompanhe nas primeiras semanas.
+- **Aba Ligações no Chatwoot** depende só do contrato público dos Aplicativos do
+  Painel: a mensagem `appContext` (campos `conversation.inbox_id`,
+  `contact.name`, `contact.phone_number`, `contact.custom_attributes`, ou
+  `conversation.meta.sender` na falta de `contact`) e o pedido
+  `chatwoot-dashboard-app:fetch-info`. Se isso mudar, a aba cai para o campo de número
+  manual.
 - **Contas com vários aparelhos** (issue #35 do projeto original): há relatos de
   chamadas que conectam sem áudio para quem ligou e de chamadas recebidas que não
   chegam. Teste com os números reais antes de depender disso.
