@@ -17,6 +17,7 @@ type server struct {
 	staticDir string
 	sipGW     *SIPGateway
 	agents    *agentDirectory // atendentes (usuário/senha) — ver agents.go
+	embed     *embedSettings  // aba Ligações no Chatwoot — ver embed.go
 	apiMux    *http.ServeMux  // usado pelo MCP para despachar as ferramentas em processo
 }
 
@@ -47,6 +48,11 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 		return nil, err
 	}
 
+	embed, err := newEmbedSettings(ctx, mainDB)
+	if err != nil {
+		return nil, err
+	}
+
 	broker := NewBroker()
 	if rows, err := store.recentCalls(ctx, callHistoryLoad); err != nil {
 		log.Warn("histórico de chamadas: não carregou do banco", "err", err)
@@ -67,7 +73,7 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	broker.InboxForSession = mgr.inboxIDForSession
 
 	// Gateway SIP: o PBX/softphone do cliente se registra aqui (modelo Wavoip).
-	srv := &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir, agents: agents}
+	srv := &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir, agents: agents, embed: embed}
 	sipAddr, sipOn := sipListenAddr()
 	if !sipOn {
 		log.Info("SIP desativado (WACALLS_SIP_ADDR=off ou modo só ligações): porta SIP não aberta")

@@ -32,6 +32,10 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	mux.HandleFunc("PUT /api/agents/{id}", s.handleUpdateAgent)
 	mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
+	// Aba Ligações no Chatwoot (Dashboard App) — ver embed.go.
+	mux.HandleFunc("GET /api/embed/config", s.handleGetEmbedConfig)
+	mux.HandleFunc("PUT /api/embed/config", s.handleSetEmbedConfig)
+	mux.HandleFunc("GET /api/sessions/{sid}/lid-phone", s.handleLIDPhone)
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
 	mux.HandleFunc("GET /api/sessions/{sid}/calls", s.handleSessionCalls)
@@ -470,12 +474,25 @@ func (s *server) staticFileHandler() http.Handler {
 	fs := http.FileServer(http.Dir(s.staticDir))
 	defaultTransport := strings.TrimSpace(os.Getenv("WACALLS_DEFAULT_TRANSPORT"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// só /embed/* pode ser embutido em iframe (e só pelo Chatwoot configurado).
+		w.Header().Set("Content-Security-Policy", frameAncestors(r.URL.Path))
+		if !strings.HasPrefix(r.URL.Path, "/embed/") {
+			w.Header().Set("X-Frame-Options", "DENY")
+		}
 		switch r.URL.Path {
-		case "/", "/index.html":
+		case "/", "/index.html", "/embed/chatwoot":
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-			if defaultTransport != "" {
+			embed := r.URL.Path == "/embed/chatwoot"
+			if defaultTransport != "" || embed {
 				if b, err := os.ReadFile(filepath.Join(s.staticDir, "index.html")); err == nil {
-					inject := "<script>window.__WACALLS_DEFAULT_TRANSPORT=" + strconv.Quote(defaultTransport) + ";</script>"
+					inject := ""
+					if defaultTransport != "" {
+						inject += "<script>window.__WACALLS_DEFAULT_TRANSPORT=" + strconv.Quote(defaultTransport) + ";</script>"
+					}
+					if embed {
+						origins, _ := json.Marshal(embedOrigins())
+						inject += "<script>window.__WACALLS_EMBED_ORIGINS=" + string(origins) + ";</script>"
+					}
 					html := strings.Replace(string(b), "</head>", inject+"</head>", 1)
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
 					_, _ = w.Write([]byte(html))

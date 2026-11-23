@@ -348,6 +348,8 @@ func agentAllowed(r *http.Request, a *agent) bool {
 		return r.Method == http.MethodGet
 	case "/api/agent/refresh":
 		return r.Method == http.MethodPost
+	case "/api/embed/config": // aba Ligações no Chatwoot (só leitura)
+		return r.Method == http.MethodGet
 	case "/api/sessions": // a lista é filtrada no handler
 		return r.Method == http.MethodGet
 	}
@@ -361,7 +363,7 @@ func agentAllowed(r *http.Request, a *agent) bool {
 	}
 	segs = segs[1:]
 	switch {
-	case len(segs) == 1 && segs[0] == "history":
+	case len(segs) == 1 && (segs[0] == "history" || segs[0] == "lid-phone"):
 		return r.Method == http.MethodGet
 	case len(segs) == 1 && segs[0] == "calls":
 		return r.Method == http.MethodGet || r.Method == http.MethodPost
