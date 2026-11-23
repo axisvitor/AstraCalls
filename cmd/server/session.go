@@ -967,7 +967,8 @@ func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCall
 	// ignorado, então a chamada nunca encerrava (ringtone preso nos atendentes e
 	// vaga presa no limite de chamadas). Agora tratamos como terminal.
 	if nodeHasTerminalCall(evt.Node) {
-		s.log.Info("call encerrada em outro device (terminal via UnknownCallEvent)", "call_id", callID)
+		s.log.Info("call encerrada em outro device (terminal via UnknownCallEvent)", "call_id", callID,
+			"from", evt.Node.AttrGetter().OptionalString("from"), "children", terminalChildren(evt.Node))
 		ac.cm.HandleCallTerminate(evt.Node) // → OnEnded → broker.endCall (avisa TODOS) + removeCall
 		return
 	}
@@ -981,6 +982,17 @@ func (s *Session) handleUnknownCall(ctx context.Context, evt *events.UnknownCall
 	default:
 		ac.cm.HandleVideoState(ctx, evt.Node)
 	}
+}
+
+// terminalChildren descreve os filhos <terminate>/<reject> (tag e reason) para log.
+func terminalChildren(node *waBinary.Node) string {
+	var out []string
+	for _, c := range node.GetChildren() {
+		if c.Tag == "terminate" || c.Tag == "reject" {
+			out = append(out, c.Tag+":"+wanode.AttrString(c.Attrs, "reason"))
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 // nodeHasTerminalCall diz se um <call> traz um <terminate> ou <reject> entre os

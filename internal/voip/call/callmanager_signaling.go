@@ -330,7 +330,14 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 			"call_id", call.CallID, "from", sender, "accepted_by", m.acceptedByJid)
 		return
 	}
-	m.log.Info("call terminated by peer", "call_id", call.CallID, "reason", string(reason))
+	// raw_reason/from/tag: para confirmar com número real qual motivo chega quando
+	// o celular da loja atende (accepted_elsewhere?) e de qual aparelho.
+	rawReason, tag := "", ""
+	if info != nil {
+		rawReason, tag = wanode.AttrString(info.InnerNode.Attrs, "reason"), info.Tag
+	}
+	m.log.Info("call terminated by peer", "call_id", call.CallID, "reason", string(reason),
+		"raw_reason", rawReason, "tag", tag, "from", sender, "direction", string(call.Direction))
 	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
 	ended := call
 	m.emitState()
