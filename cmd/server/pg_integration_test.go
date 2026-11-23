@@ -71,7 +71,7 @@ func TestPGAgentsPersist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, got, _, err := d2.login("joao", "senha-forte-1")
+	_, got, _, err := d2.login("joao", "senha-forte-1", "198.51.100.1")
 	if err != nil || got.Name != name || len(got.Sessions) != 2 {
 		t.Fatalf("login após reinício: %+v %v", got, err)
 	}

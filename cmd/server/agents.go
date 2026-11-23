@@ -8,9 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +31,7 @@ const (
 	agentTokenPrefix = "at1"
 	agentTokenTTL    = 12 * time.Hour
 	agentMaxFails    = 5                // tentativas erradas seguidas antes de travar
+	agentMaxFailsIP  = 20               // erros por IP (qualquer usuário) antes de travar o IP
 	agentLockFor     = 15 * time.Minute // tempo travado
 	agentMinPassword = 8
 )
@@ -68,9 +71,12 @@ func agentSigningSecret() []byte {
 	return mac.Sum(nil)
 }
 
+// loginFail conta tentativas de uma chave ("u:<usuário>" ou "ip:<ip>").
 type loginFail struct {
-	n     int
-	until time.Time
+	n        int       // erros
+	inflight int       // tentativas em andamento (reservadas antes do bcrypt)
+	until    time.Time // travado até
+	since    time.Time // 1º erro da janela atual (erros valem por agentLockFor)
 }
 
 // agentDirectory guarda os atendentes em memória (são poucos) e persiste no banco
@@ -261,15 +267,28 @@ var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("wacalls-dummy-password"),
 var (
 	errLoginLocked = errors.New("muitas tentativas erradas; tente de novo mais tarde")
 	errLoginBad    = errors.New("usuário ou senha inválidos")
+	errLoginBusy   = errors.New("servidor ocupado; tente de novo em instantes")
 )
 
 // login confere usuário/senha com limite de tentativas por usuário (agentMaxFails
 // erros seguidos travam o usuário por agentLockFor) e devolve um token.
-func (d *agentDirectory) login(username, password string) (string, agent, time.Time, error) {
+func (d *agentDirectory) login(username, password, ip string) (string, agent, time.Time, error) {
 	username = strings.ToLower(strings.TrimSpace(username))
 	now := d.now()
+	userKey, ipKey := "u:"+username, "ip:"+ip
+	// Reserva a tentativa ANTES do bcrypt, no mesmo trecho travado da checagem:
+	// pedidos em paralelo não passam do limite (antes 200 em paralelo conferiam
+	// dezenas de senhas).
 	d.mu.Lock()
-	if f := d.fails[username]; f != nil && now.Before(f.until) {
+	if len(d.fails) > agentFailsCap {
+		d.pruneFails(now)
+	}
+	if !d.reserve(userKey, agentMaxFails, now) {
+		d.mu.Unlock()
+		return "", agent{}, time.Time{}, errLoginLocked
+	}
+	if !d.reserve(ipKey, agentMaxFailsIP, now) {
+		d.fails[userKey].inflight--
 		d.mu.Unlock()
 		return "", agent{}, time.Time{}, errLoginLocked
 	}
@@ -287,28 +306,84 @@ func (d *agentDirectory) login(username, password string) (string, agent, time.T
 	if found != nil {
 		hash = found.hash
 	}
-	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil || found == nil {
-		d.mu.Lock()
-		if len(d.fails) > agentFailsCap {
-			d.pruneFails(now)
-		}
-		f := d.fails[username]
-		if f == nil || !f.until.IsZero() && !now.Before(f.until) {
-			f = &loginFail{}
-			d.fails[username] = f
-		}
-		f.n++
-		if f.n >= agentMaxFails {
-			f.until = now.Add(agentLockFor)
-		}
-		d.mu.Unlock()
+	match, busy := compareLimited(hash, password)
+	ok := match && found != nil
+	d.mu.Lock()
+	d.settle(userKey, ok, !busy, agentMaxFails, now)
+	d.settle(ipKey, false, !busy && !ok, agentMaxFailsIP, now) // acerto não zera o IP
+	if ok {
+		delete(d.fails, userKey)
+	}
+	d.mu.Unlock()
+	switch {
+	case busy:
+		return "", agent{}, time.Time{}, errLoginBusy
+	case !ok:
 		return "", agent{}, time.Time{}, errLoginBad
 	}
-	d.mu.Lock()
-	delete(d.fails, username)
-	d.mu.Unlock()
 	tok, exp := d.issue(found)
 	return tok, *found, exp, nil
+}
+
+// reserve (com d.mu) reserva uma tentativa para a chave; false = travada ou com
+// tentativas demais (erros + em andamento).
+func (d *agentDirectory) reserve(key string, max int, now time.Time) bool {
+	f := d.fails[key]
+	if f != nil && f.inflight == 0 {
+		lockOver := !f.until.IsZero() && !now.Before(f.until)
+		windowOver := f.until.IsZero() && !f.since.IsZero() && now.Sub(f.since) > agentLockFor
+		if lockOver || windowOver {
+			f = nil // bloqueio venceu, ou os erros são de mais de 15 min: começa de novo
+		}
+	}
+	if f == nil {
+		f = &loginFail{}
+		d.fails[key] = f
+	}
+	if now.Before(f.until) || f.n+f.inflight >= max {
+		return false
+	}
+	f.inflight++
+	return true
+}
+
+// settle (com d.mu) fecha a tentativa reservada; count = contar como erro.
+func (d *agentDirectory) settle(key string, ok, count bool, max int, now time.Time) {
+	f := d.fails[key]
+	if f == nil {
+		return
+	}
+	if f.inflight > 0 {
+		f.inflight--
+	}
+	if !ok && count {
+		if f.since.IsZero() {
+			f.since = now
+		}
+		f.n++
+		if f.n >= max {
+			f.until = now.Add(agentLockFor)
+		}
+	}
+}
+
+// bcryptSlots limita quantos bcrypt rodam ao mesmo tempo: um flood no login
+// (aberto) não pode tirar CPU do áudio das chamadas, que roda no mesmo processo.
+var (
+	bcryptSlots = make(chan struct{}, max(1, runtime.NumCPU()/2))
+	bcryptWait  = 2 * time.Second
+)
+
+// compareLimited confere a senha dentro do limite de concorrência; busy = não
+// conseguiu vaga a tempo (não conta como erro).
+func compareLimited(hash []byte, password string) (match, busy bool) {
+	select {
+	case bcryptSlots <- struct{}{}:
+	case <-time.After(bcryptWait):
+		return false, true
+	}
+	defer func() { <-bcryptSlots }()
+	return bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil, false
 }
 
 // issue emite um token novo para o atendente (login e renovação).
@@ -324,7 +399,7 @@ const agentFailsCap = 10000
 // pruneFails tira as entradas sem bloqueio ativo; se ainda estiver cheio, zera.
 func (d *agentDirectory) pruneFails(now time.Time) {
 	for u, f := range d.fails {
-		if !now.Before(f.until) {
+		if f.inflight == 0 && !now.Before(f.until) {
 			delete(d.fails, u)
 		}
 	}
@@ -422,8 +497,11 @@ func (s *server) handleAgentLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload inválido"})
 		return
 	}
-	tok, a, exp, err := s.agents.login(body.Username, body.Password)
+	tok, a, exp, err := s.agents.login(body.Username, body.Password, clientIP(r))
 	switch {
+	case errors.Is(err, errLoginBusy):
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
 	case errors.Is(err, errLoginLocked):
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
 		return
@@ -533,4 +611,57 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// clientIP é o IP de quem chamou. X-Forwarded-For só vale quando a conexão vem de
+// um proxy confiável (WACALLS_TRUSTED_PROXIES: IPs/CIDRs separados por vírgula,
+// ex.: a rede docker do Caddy); aí vale o último IP da lista que não é proxy.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	trusted := trustedProxies()
+	if !ipIn(host, trusted) {
+		return host
+	}
+	hops := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		h := strings.TrimSpace(hops[i])
+		if net.ParseIP(h) == nil {
+			break
+		}
+		if !ipIn(h, trusted) {
+			return h
+		}
+		host = h
+	}
+	return host
+}
+
+func trustedProxies() []*net.IPNet {
+	var out []*net.IPNet
+	for _, v := range splitList(os.Getenv("WACALLS_TRUSTED_PROXIES")) {
+		if !strings.Contains(v, "/") {
+			if ip := net.ParseIP(v); ip != nil && ip.To4() != nil {
+				v += "/32"
+			} else {
+				v += "/128"
+			}
+		}
+		if _, n, err := net.ParseCIDR(v); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func ipIn(s string, nets []*net.IPNet) bool {
+	ip := net.ParseIP(s)
+	for _, n := range nets {
+		if ip != nil && n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

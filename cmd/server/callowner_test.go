@@ -14,7 +14,7 @@ func TestAgentCallOwnership(t *testing.T) {
 	d, _ := newTestAgents(t) // "maria" com s1
 	bob, _ := d.create(context.Background(), "bob", "Bob", "senha-forte-2", []string{"s1"})
 	maria := loginToken(t, d)
-	bobTok, _, _, _ := d.login("bob", "senha-forte-2")
+	bobTok, _, _, _ := d.login("bob", "senha-forte-2", "198.51.100.1")
 	mariaAgent, _ := d.fromToken(maria)
 	mariaOwner := agentOwnerPrefix + mariaAgent.ID
 

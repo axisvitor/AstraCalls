@@ -284,6 +284,7 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_PUBLIC_BASE_URL` | — | Base pública p/ URLs de gravação, formulários e widget (ex.: `https://call.seudominio.com`) |
 | `WACALLS_WIDGET_KEY` | — | Chave-mestra para emitir tokens de widget (`POST /api/widget-tokens`) |
 | `WACALLS_WIDGET_SIGNING_SECRET` | — | Segredo de assinatura dos tokens de widget |
+| `WACALLS_TRUSTED_PROXIES` | — | IPs/CIDRs do proxy reverso cujo `X-Forwarded-For` vale para o limite de login por IP (ex.: a rede docker do Caddy). Sem isso vale o IP da conexão |
 | `WACALLS_EMBED_ORIGINS` | — | Origens (ex.: `https://chat.sualoja.com.br`) que podem embutir `/embed/chatwoot` (aba Ligações no Chatwoot). Vazio = ninguém; o resto do painel nunca é embutível |
 | `WACALLS_EMBED_INBOXES` | — | Caixa de entrada do Chatwoot → sessão, ex.: `12=ID,13=ID2` (o painel do admin também edita) |
 | `WACALLS_EMBED_PHONE_ATTRS` | `waha_whatsapp_jid,waha_whatsapp_chat_id,waha_whatsapp_lid` | Atributos do contato consultados quando ele não tem telefone |

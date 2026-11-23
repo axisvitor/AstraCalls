@@ -61,6 +61,7 @@ Já definidas no compose (mude só se precisar):
 | `WACALLS_AUTO_REJECT` | `false` neste modo | `true` volta ao comportamento antigo (veja abaixo) |
 | `WACALLS_DEVICE_NAME` | `AstraCalls` | Nome em "Dispositivos conectados" no celular (vale para pareamentos novos) |
 | `WACALLS_MAX_CALLS` | `8` | Chamadas simultâneas por número |
+| `WACALLS_TRUSTED_PROXIES` | redes privadas do docker | De quem aceitar o `X-Forwarded-For` (o Caddy). Sem isso, atrás de proxy, todos os vendedores parecem vir do mesmo IP e o limite de login por IP vale para a loja inteira |
 
 ### Sobre o tempo de toque (`WACALLS_RING_TIMEOUT_SECONDS`)
 

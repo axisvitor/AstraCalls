@@ -26,7 +26,7 @@ func newTestAgents(t *testing.T) (*agentDirectory, agent) {
 
 func loginToken(t *testing.T, d *agentDirectory) string {
 	t.Helper()
-	tok, _, _, err := d.login("maria", "senha-forte-1")
+	tok, _, _, err := d.login("maria", "senha-forte-1", "198.51.100.1")
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -40,19 +40,19 @@ func TestAgentLoginRateLimited(t *testing.T) {
 	now := time.Now()
 	d.now = func() time.Time { return now }
 	for i := 0; i < agentMaxFails; i++ {
-		if _, _, _, err := d.login("maria", "errada"); !errors.Is(err, errLoginBad) {
+		if _, _, _, err := d.login("maria", "errada", "198.51.100.1"); !errors.Is(err, errLoginBad) {
 			t.Fatalf("tentativa %d: err=%v, quer errLoginBad", i, err)
 		}
 	}
-	if _, _, _, err := d.login("maria", "senha-forte-1"); !errors.Is(err, errLoginLocked) {
+	if _, _, _, err := d.login("maria", "senha-forte-1", "198.51.100.1"); !errors.Is(err, errLoginLocked) {
 		t.Fatalf("depois de %d erros: err=%v, quer errLoginLocked", agentMaxFails, err)
 	}
 	now = now.Add(agentLockFor + time.Second)
-	if _, _, _, err := d.login("Maria", "senha-forte-1"); err != nil {
+	if _, _, _, err := d.login("Maria", "senha-forte-1", "198.51.100.1"); err != nil {
 		t.Fatalf("após o bloqueio: %v", err)
 	}
 	// usuário inexistente responde igual a senha errada (não revela quem existe)
-	if _, _, _, err := d.login("ninguem", "x"); !errors.Is(err, errLoginBad) {
+	if _, _, _, err := d.login("ninguem", "x", "198.51.100.1"); !errors.Is(err, errLoginBad) {
 		t.Fatalf("usuário inexistente: %v", err)
 	}
 }
@@ -159,7 +159,7 @@ func TestAgentTokenRevocation(t *testing.T) {
 	if _, ok := d.fromToken(tok); ok {
 		t.Fatal("token continuou valendo após trocar a senha")
 	}
-	tok2, _, _, _ := d.login("maria", pw)
+	tok2, _, _, _ := d.login("maria", pw, "198.51.100.1")
 	d.now = func() time.Time { return time.Now().Add(agentTokenTTL + time.Minute) }
 	if _, ok := d.fromToken(tok2); ok {
 		t.Fatal("token expirado aceito")
