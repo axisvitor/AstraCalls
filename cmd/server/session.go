@@ -306,6 +306,11 @@ func (s *Session) setChatwoot(c ChatwootConfig) {
 }
 
 func (s *Session) getChatwoot() ChatwootConfig {
+	if callsOnly {
+		// modo só ligações: a config salva é ignorada (valid() == false), então
+		// nenhum caminho de escrita/espelho no Chatwoot roda.
+		return ChatwootConfig{}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.chatwoot
@@ -378,6 +383,11 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 // silenciosamente ErrNoPushName (o pushname ainda não chegou; reenviamos no
 // evento PushNameSetting) e só loga outras falhas em debug.
 func (s *Session) keepPresenceActive(ctx context.Context) {
+	if callsOnly {
+		// modo só ligações: "available" faria o WhatsApp parar de notificar o
+		// celular e o outro aparelho do número.
+		return
+	}
 	// Sem pushname o WhatsApp recusa a presença (ErrNoPushName) e o dispositivo
 	// nunca é marcado como ativo. No Connected há uma corrida: o pushname pode
 	// ainda não ter sido carregado do store/app-state. Esperamos alguns segundos
@@ -738,7 +748,7 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 // maybeMarkRead confirma leitura automática das mensagens recebidas quando
 // read_messages está ligado na config do Chatwoot (paridade com a Evolution).
 func (s *Session) maybeMarkRead(ctx context.Context, evt *events.Message) {
-	if !s.getChatwoot().ReadMessages || evt.Info.IsFromMe {
+	if callsOnly || !s.getChatwoot().ReadMessages || evt.Info.IsFromMe {
 		return
 	}
 	// não faz sentido/formato p/ newsletters e status/broadcast

@@ -280,7 +280,7 @@ func (s *server) routes() http.Handler {
 		}
 	}
 	s.apiMux = mux
-	var handler http.Handler = mux
+	var handler http.Handler = withCallsOnly(mux)
 	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
 		handler = withAuth(handler, key, os.Getenv("WACALLS_WIDGET_KEY"), func(sid string) (int, int) {
 			return s.sessions.accountIDForSession(sid), s.sessions.inboxIDForSession(sid)

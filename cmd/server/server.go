@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
@@ -48,10 +49,10 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	broker.InboxForSession = mgr.inboxIDForSession
 
 	// Gateway SIP: o PBX/softphone do cliente se registra aqui (modelo Wavoip).
-	// Endereço configurável por WACALLS_SIP_ADDR (padrão 0.0.0.0:5060).
-	sipAddr := os.Getenv("WACALLS_SIP_ADDR")
-	if sipAddr == "" {
-		sipAddr = "0.0.0.0:5060"
+	sipAddr, sipOn := sipListenAddr()
+	if !sipOn {
+		log.Info("SIP desativado (WACALLS_SIP_ADDR=off ou modo só ligações): porta SIP não aberta")
+		return &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir}, nil
 	}
 	sipGateway, err := NewSIPGateway(mgr, log)
 	if err != nil {
@@ -65,4 +66,21 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	}
 
 	return &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir, sipGW: sipGateway}, nil
+}
+
+// sipListenAddr devolve onde o gateway SIP escuta e se ele deve subir. Endereço por
+// WACALLS_SIP_ADDR (padrão 0.0.0.0:5060); "off"/"0"/"false" desliga. No modo só
+// ligações o padrão é desligado: só sobe se WACALLS_SIP_ADDR for setado.
+func sipListenAddr() (string, bool) {
+	addr := strings.TrimSpace(os.Getenv("WACALLS_SIP_ADDR"))
+	switch strings.ToLower(addr) {
+	case "off", "0", "false", "no", "disabled":
+		return "", false
+	case "":
+		if callsOnly {
+			return "", false
+		}
+		return "0.0.0.0:5060", true
+	}
+	return addr, true
 }
