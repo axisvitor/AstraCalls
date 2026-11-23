@@ -1,0 +1,59 @@
+# AstraCalls em modo SÓ LIGAÇÕES, atrás de um Caddy que já existe na VPS.
+# Guia: guias/so-ligacoes.md
+#
+#   cp .env.example .env    # preencha
+#   docker compose up -d
+#
+# O Postgres é próprio e NÃO é exposto (sem "ports"). O AstraCalls também não
+# publica porta: o Caddy chega nele pela rede docker "caddy" (veja o guia).
+name: astracalls
+
+services:
+  astracalls:
+    # A imagem oficial (astraonline/astracalls) NÃO tem o modo só ligações: use a
+    # imagem gerada a partir deste fork (veja "Imagem" no guia).
+    image: ${ASTRACALLS_IMAGE:?defina ASTRACALLS_IMAGE no .env}
+    restart: unless-stopped
+    command: ["-addr", ":8080", "-static", "/app/client/dist"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      WACALLS_CALLS_ONLY: "true"
+      WACALLS_API_KEY: ${WACALLS_API_KEY:?defina WACALLS_API_KEY no .env}
+      WACALLS_PG_URL: postgres://astracalls:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/postgres?sslmode=disable
+      WACALLS_PUBLIC_BASE_URL: https://${ASTRACALLS_DOMAIN:?defina ASTRACALLS_DOMAIN no .env}
+      # Áudio do navegador pela 443 (WebSocket). Sem porta UDP extra para abrir.
+      WACALLS_DEFAULT_TRANSPORT: ${WACALLS_DEFAULT_TRANSPORT:-websocket}
+      # Toque: depois de N segundos sem atender a chamada some do painel. No modo só
+      # ligações ela NÃO é recusada (o celular continua tocando).
+      WACALLS_RING_TIMEOUT_SECONDS: ${WACALLS_RING_TIMEOUT_SECONDS:-60}
+      WACALLS_MAX_CALLS: ${WACALLS_MAX_CALLS:-8}
+      # Nome que aparece em "Dispositivos conectados" no celular.
+      WACALLS_DEVICE_NAME: ${WACALLS_DEVICE_NAME:-AstraCalls}
+    networks: [default, caddy]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: astracalls
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astracalls"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [default]
+
+volumes:
+  pgdata:
+
+networks:
+  # Rede onde o container do Caddy também está. Crie uma vez com
+  # "docker network create caddy" e ligue o Caddy nela (veja o guia).
+  caddy:
+    external: true
+    name: ${CADDY_NETWORK:-caddy}

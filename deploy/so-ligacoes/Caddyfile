@@ -1,0 +1,7 @@
+# Trecho para o Caddyfile que já atende o Chatwoot. Troque o domínio.
+# O Caddy precisa estar na mesma rede docker do AstraCalls (rede "caddy").
+# WebSocket (áudio) e SSE (eventos de chamada) passam sem configuração extra;
+# não use "encode" aqui para não segurar os eventos em buffer.
+ligacoes.sualoja.com.br {
+	reverse_proxy astracalls:8080
+}
