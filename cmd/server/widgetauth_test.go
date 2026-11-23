@@ -10,6 +10,7 @@ import (
 func TestWidgetAllowedScope(t *testing.T) {
 	allowed := []struct{ method, path string }{
 		{"GET", "/api/events"},
+		{"GET", "/api/config"}, // transporte padrão (issue #51 do original)
 		{"GET", "/api/chatwoot/resolve"},
 		{"POST", "/api/sessions/abc/calls"},
 		{"POST", "/api/sessions/abc/calls/xyz/webrtc"},

@@ -439,6 +439,10 @@ func widgetAllowed(r *http.Request) bool {
 	switch {
 	case p == "/api/events": // SSE de chamadas
 		return true
+	// transporte padrão (WACALLS_DEFAULT_TRANSPORT) — sem isto o widget não lia a
+	// config, ficava em WebRTC e não caía para WebSocket (issue #51 do original).
+	case r.Method == http.MethodGet && p == "/api/config":
+		return true
 	case r.Method == http.MethodGet && p == "/api/chatwoot/resolve": // nome/telefone do contato
 		return true
 	// operações de chamada: iniciar, atender/recusar, webrtc, vídeo, encerrar
